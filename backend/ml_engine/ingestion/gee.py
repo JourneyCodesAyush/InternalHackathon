@@ -43,6 +43,8 @@ GEOSCF_BLH_BAND = "ZPBL"
 DEM_IMAGE = "NASA/NASADEM_HGT/001"
 S2_COLLECTION = "COPERNICUS/S2_SR_HARMONIZED"
 
+S2_MAX_SCENES = 40
+
 NODATA = -9999.0
 DAYS_PER_REQUEST = 20
 
@@ -83,27 +85,49 @@ def _grid(grid: GridSpec) -> dict:
     }
 
 
+# Deterministic "request too heavy" errors: retrying the same request cannot succeed, splitting it can.
+_TOO_BIG_MARKERS = ("memory limit", "computation timed out", "request size", "too many pixels")
+MIN_STRIP_ROWS = 4
+
+
 def _compute_pixels(image, grid: GridSpec, band_names: list[str], retries: int = 4) -> np.ndarray:
-    """Fetch a multi-band image as float32 (bands, rows, cols) with masked pixels -> NaN."""
+    """Fetch a multi-band image as float32 (bands, rows, cols) with masked pixels -> NaN.
+
+    Requests that exceed Earth Engine's per-request memory/time limits are split into horizontal strips
+    recursively; transient errors (rate limits, backend hiccups) are retried with backoff.
+    """
     ee = _ee()
-    request = {
-        "expression": image.unmask(NODATA, sameFootprint=False).toFloat(),
-        "fileFormat": "NUMPY_NDARRAY",
-        "grid": _grid(grid),
-    }
+    expression = image.unmask(NODATA, sameFootprint=False).toFloat()
+    out = _compute_strip(ee, expression, grid, band_names, retries)
+    out[np.isclose(out, NODATA)] = np.nan
+    return out
+
+
+def _compute_strip(ee, expression, grid: GridSpec, band_names: list[str], retries: int) -> np.ndarray:
+    request = {"expression": expression, "fileFormat": "NUMPY_NDARRAY", "grid": _grid(grid)}
     for attempt in range(retries):
         try:
             arr = ee.data.computePixels(request)
-            break
+            return np.stack([np.asarray(arr[name], dtype=np.float32) for name in band_names])
         except ee.EEException as exc:
+            msg = str(exc).lower()
+            if any(m in msg for m in _TOO_BIG_MARKERS):
+                if grid.height < 2 * MIN_STRIP_ROWS:
+                    raise
+                top_rows = grid.height // 2
+                log.info("Request too large for Earth Engine (%s); splitting %d rows into %d + %d",
+                         exc, grid.height, top_rows, grid.height - top_rows)
+                top = GridSpec(grid.west, grid.north, grid.res, grid.width, top_rows, grid.crs)
+                bottom = GridSpec(grid.west, grid.north - top_rows * grid.res, grid.res, grid.width,
+                                  grid.height - top_rows, grid.crs)
+                return np.concatenate([_compute_strip(ee, expression, top, band_names, retries),
+                                       _compute_strip(ee, expression, bottom, band_names, retries)], axis=1)
             if attempt == retries - 1:
                 raise
             wait = 2 ** (attempt + 1)
             log.warning("computePixels failed (%s); retrying in %ss", exc, wait)
             time.sleep(wait)
-    out = np.stack([np.asarray(arr[name], dtype=np.float32) for name in band_names])
-    out[np.isclose(out, NODATA)] = np.nan
-    return out
+    raise RuntimeError("unreachable")
 
 
 def _to_grid_mean(image, grid: GridSpec, native_scale_m: float | None = None, max_pixels: int = 1024):
@@ -266,16 +290,21 @@ def fetch_static(grid: GridSpec, end_date: str) -> dict[str, np.ndarray]:
     dem = ee.Image(DEM_IMAGE).select("elevation")
     slope = ee.Terrain.slope(dem).rename("slope")
     terrain = _to_grid_mean(dem.rename("elevation").addBands(slope), grid)
+    terrain_arr = _compute_pixels(terrain, grid, ["elevation", "slope"])
 
     end = pd.Timestamp(end_date)
     s2 = (
         ee.ImageCollection(S2_COLLECTION)
         .filterBounds(region)
         .filterDate((end - timedelta(days=365)).strftime("%Y-%m-%d"), (end + timedelta(days=1)).strftime("%Y-%m-%d"))
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
+        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
+        .select(["B4", "B8", "B11", "SCL"])
+        # The clearest scenes are plenty for a land-cover composite and keep the median cheap.
+        .sort("CLOUDY_PIXEL_PERCENTAGE")
+        .limit(S2_MAX_SCENES)
     )
     if s2.size().getInfo() == 0:
-        raise RuntimeError("No Sentinel-2 scenes with <30% cloud in the 12 months before end_date")
+        raise RuntimeError("No Sentinel-2 scenes with <20% cloud in the 12 months before end_date")
 
     def indices(img):
         scl = img.select("SCL")
@@ -287,13 +316,16 @@ def fetch_static(grid: GridSpec, end_date: str) -> dict[str, np.ndarray]:
 
     s2_proj = ee.Image(s2.first()).select("B4").projection()
     composite = s2.map(indices).median().setDefaultProjection(s2_proj)
-    # 10 m -> 250 m is 625 input pixels per output cell; built_up becomes a built-up *fraction*.
-    s2_fine = composite.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=1024).reproject(
+    # Two-stage area mean 10 m -> 50 m -> 250 m (25 inputs per output each) instead of one 625-pixel
+    # reduction, which exceeds per-request memory. built_up becomes a built-up *fraction*.
+    s2_50m = composite.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=64).reproject(s2_proj.atScale(50))
+    s2_fine = s2_50m.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=64).reproject(
         crs=grid.crs, crsTransform=grid.crs_transform
     )
+    s2_arr = _compute_pixels(s2_fine, grid, ["ndvi", "built_up"])
 
     names = ["elevation", "slope", "ndvi", "built_up"]
-    arr = _compute_pixels(terrain.addBands(s2_fine), grid, names)
+    arr = np.concatenate([terrain_arr, s2_arr], axis=0)
     static = {n: fill_nan_nearest(arr[i]) for i, n in enumerate(names)}
     static["elevation"] = np.nan_to_num(static["elevation"], nan=0.0)  # NASADEM is void over open sea
     static["slope"] = np.nan_to_num(static["slope"], nan=0.0)
