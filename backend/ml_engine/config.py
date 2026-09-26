@@ -68,6 +68,7 @@ class PipelineConfig:
     end_date: str = "2026-01-31"  # inclusive
     coarse_res_deg: float = 0.035  # ~3.9 km, close to the TROPOMI 3.5 x 5.5 km footprint
     refine_factor: int = 14  # 0.035 / 14 = 0.0025 deg ~ 270 m
+    s5p_product: str = "OFFL"  # "OFFL" = reprocessed, best for training; "NRTI" = near real time (hours old)
     qa_threshold: float = 0.75
     max_cloud_fraction: float = 0.3  # used when the collection carries no qa_value band
     min_valid_subpixel_fraction: float = 0.5  # coarse cell kept only if >=50% of its S5P bins are clear
@@ -75,6 +76,7 @@ class PipelineConfig:
     output_dir: Path = Path("outputs")
     model_dir: Path = Path("models/downscaler")
     cache_dir: Path = Path("cache")
+    station_hours: tuple[int, int] | None = (12, 16)  # local hours averaged from hourly station data (S5P overpass ~13:30-14:30 IST); None = full day
     fetch_osm_roads: bool = True  # download OSM major roads for road density when --roads is not given
     gapfill: GapFillConfig = field(default_factory=GapFillConfig)
     downscale: DownscaleConfig = field(default_factory=DownscaleConfig)

@@ -26,7 +26,7 @@ from .validation import acceptance, regression_metrics, sample_at_stations
 log = logging.getLogger(__name__)
 
 SURFACE_MODEL_FILE = "surface_model.joblib"
-GEE_CACHE_VERSION = 2  # bump when the set of ingested layers changes
+GEE_CACHE_VERSION = 3  # bump when the set of ingested layers changes
 
 
 @dataclass
@@ -55,7 +55,7 @@ class NO2Pipeline:
         self.station_qc = None
         stations = None
         if stations_csv:
-            stations, self.station_qc = quality_control(load_stations_csv(stations_csv))
+            stations, self.station_qc = quality_control(load_stations_csv(stations_csv, self.cfg.station_hours))
             log.info("Station QC: %d/%d stations kept, %d frozen readings removed, dropped=%s",
                      self.station_qc["stations_out"], self.station_qc["stations_in"],
                      self.station_qc["frozen_rows_removed"], list(self.station_qc["dropped_stations"]))
@@ -83,7 +83,7 @@ class NO2Pipeline:
         from .ingestion import gee
 
         cfg = self.cfg
-        key = hashlib.sha1(json.dumps([GEE_CACHE_VERSION, cfg.bbox, cfg.start_date, cfg.end_date, cfg.coarse_res_deg, cfg.refine_factor,
+        key = hashlib.sha1(json.dumps([GEE_CACHE_VERSION, cfg.s5p_product, cfg.bbox, cfg.start_date, cfg.end_date, cfg.coarse_res_deg, cfg.refine_factor,
                                        cfg.qa_threshold, cfg.max_cloud_fraction, cfg.min_valid_subpixel_fraction]
                                       ).encode()).hexdigest()[:12]
         cache_dir = Path(cfg.cache_dir)

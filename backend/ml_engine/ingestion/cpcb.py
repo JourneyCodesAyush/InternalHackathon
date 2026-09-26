@@ -67,7 +67,7 @@ def convert(raw_dir: str | Path, coords_csv: str | Path, out_csv: str | Path, pa
     coords = pd.read_csv(coords_csv)
     lookup = {_norm(r.station_name): r for r in coords.itertuples()}
     frames, skipped = [], []
-    for path in sorted(Path(raw_dir).glob("*.xls*")):
+    for path in sorted(Path(raw_dir).rglob("*.xls*")):  # sub-folders per city / year are fine
         try:
             meta, df = parse_report(path, parameter)
         except ValueError as exc:

@@ -26,6 +26,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--end", default=None, help="YYYY-MM-DD inclusive (default: config)")
     p.add_argument("--stations", default=None, help="CSV with station_id,lat,lon,date,no2 (ug/m3)")
     p.add_argument("--roads", default=None, help="GeoJSON of road lines (e.g. OSM export) for road density")
+    p.add_argument("--s5p-product", choices=["OFFL", "NRTI"], default="OFFL",
+                   help="OFFL = reprocessed (training); NRTI = near real time, for today's maps")
+    p.add_argument("--station-hours", default="12-16",
+                   help="local hours averaged from hourly station data, e.g. 12-16 (S5P overpass); 'all' = full day")
     p.add_argument("--no-osm", action="store_true", help="do not download OpenStreetMap roads (gee source)")
     p.add_argument("--ee-project", default=None, help="Google Cloud project registered for Earth Engine")
     p.add_argument("--qa", type=float, default=0.75, help="qa_value threshold when the collection has one")
@@ -49,6 +53,12 @@ def main(argv=None) -> int:
         cfg.end_date = args.end
     cfg.dispersion.horizons_h = tuple(args.horizons)
     cfg.fetch_osm_roads = not args.no_osm
+    cfg.s5p_product = args.s5p_product
+    if args.station_hours == "all":
+        cfg.station_hours = None
+    else:
+        h0, h1 = (int(v) for v in args.station_hours.split("-"))
+        cfg.station_hours = (h0, h1)
     cfg.output_dir = Path(args.out) if args.out else Path("outputs") / f"{args.source}_{datetime.now():%Y%m%d_%H%M%S}"
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 

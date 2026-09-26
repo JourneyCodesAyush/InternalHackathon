@@ -15,19 +15,28 @@ from ..grid import GridSpec
 STATION_COLUMNS = ["station_id", "lat", "lon", "date", "no2"]
 
 
-def load_stations_csv(path: str | Path) -> pd.DataFrame:
-    """Load daily station NO2.
+def load_stations_csv(path: str | Path, hours: tuple[int, int] | None = (12, 16)) -> pd.DataFrame:
+    """Load station NO2 as one value per station-day.
 
-    Required columns: ``station_id, lat, lon, date, no2`` (no2 in ug/m^3, date as YYYY-MM-DD).
-    Optional: ``name``. Hourly CPCB exports can be passed as well - they are averaged to daily means.
+    Required columns: ``station_id, lat, lon, date, no2`` (no2 in ug/m^3). ``date`` is YYYY-MM-DD for daily
+    data or ``YYYY-MM-DD HH:MM`` (local time, start of the averaging hour) for hourly data. Optional: ``name``.
+
+    Hourly data is averaged over ``hours`` = [start, end) local time only, matching the ~13:30 local solar
+    time Sentinel-5P overpass instead of a 24 h mean the satellite never sees; ``None`` averages the whole day.
+    Daily data is used as is.
     """
     df = pd.read_csv(path)
     df.columns = [c.strip().lower() for c in df.columns]
     missing = [c for c in STATION_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"Station file {path} is missing columns: {missing}")
-    df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+    stamp = pd.to_datetime(df["date"])
     df["no2"] = pd.to_numeric(df["no2"], errors="coerce")
+    hourly = bool((stamp.dt.hour != 0).any())
+    if hourly and hours is not None:
+        keep = (stamp.dt.hour >= hours[0]) & (stamp.dt.hour < hours[1])
+        df, stamp = df[keep], stamp[keep]
+    df["date"] = stamp.dt.normalize()
     df = df.dropna(subset=["lat", "lon", "no2"])
     df = df[(df["no2"] >= 0) & (df["no2"] < 1000)]  # drop sensor faults / sentinel values
     group = ["station_id", "date"]

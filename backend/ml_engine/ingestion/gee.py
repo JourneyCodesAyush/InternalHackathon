@@ -27,10 +27,15 @@ from ..grid import GridSpec, fill_nan_nearest
 
 log = logging.getLogger(__name__)
 
-S5P_COLLECTION = "COPERNICUS/S5P/OFFL/L3_NO2"
+S5P_COLLECTION = "COPERNICUS/S5P/{product}/L3_NO2"  # product: OFFL (reprocessed) or NRTI (near real time)
 S5P_BAND = "tropospheric_NO2_column_number_density"
+S5P_CO_COLLECTION = "COPERNICUS/S5P/OFFL/L3_CO"
+S5P_CO_BAND = "CO_column_number_density"
+CO_SCALE = 1e3  # mol/m^2 -> mmol/m^2
 S5P_NATIVE_SCALE_M = 1113.2
 ERA5_COLLECTION = "ECMWF/ERA5_LAND/DAILY_AGGR"
+ERA5_HOURLY_COLLECTION = "ECMWF/ERA5_LAND/HOURLY"
+OVERPASS_WINDOW_H = 1.5  # hours either side of the S5P overpass averaged for meteorology
 ERA5_BANDS = {
     "u10": "u_component_of_wind_10m",
     "v10": "v_component_of_wind_10m",
@@ -165,67 +170,111 @@ def _empty(band: str):
 # --------------------------------------------------------------------------------------------------
 # Sentinel-5P
 # --------------------------------------------------------------------------------------------------
-def s5p_daily_image(day: pd.Timestamp, grid: GridSpec, cfg: PipelineConfig, has_qa: bool, name: str):
-    """Daily S5P tropospheric NO2 composite on ``grid``, with cloudy / low-QA pixels masked."""
+def s5p_daily_image(day: pd.Timestamp, grid: GridSpec, cfg: PipelineConfig, name: str, collection_id: str,
+                    band: str, mask_fn=None):
+    """Daily S5P composite of ``band`` on ``grid``; ``mask_fn(img)`` returns the per-pixel keep mask.
+
+    A coarse cell is kept only if at least ``cfg.min_valid_subpixel_fraction`` of its native 1.1 km bins
+    survive, so partly-cloudy cells are not represented by a few edge pixels.
+    """
     ee = _ee()
     region = ee.Geometry.Rectangle(list(grid.bbox), proj=grid.crs, geodesic=False)
     col = (
-        ee.ImageCollection(S5P_COLLECTION)
+        ee.ImageCollection(collection_id)
         .filterDate(day.strftime("%Y-%m-%d"), (day + timedelta(days=1)).strftime("%Y-%m-%d"))
         .filterBounds(region)
     )
 
     def screen(img):
-        if has_qa:
-            ok = img.select("qa_value").gt(cfg.qa_threshold)
-        else:
-            ok = img.select("cloud_fraction").lt(cfg.max_cloud_fraction)
-        return img.select(S5P_BAND).updateMask(ok)
+        out = img.select(band)
+        return out.updateMask(mask_fn(img)) if mask_fn else out
 
-    composite = ee.Image(ee.Algorithms.If(col.size().gt(0), col.map(screen).mean(), _empty(S5P_BAND)))
-    composite = composite.rename(S5P_BAND)
+    composite = ee.Image(ee.Algorithms.If(col.size().gt(0), col.map(screen).mean(), _empty(band))).rename(band)
     coarse = _to_grid_mean(composite, grid, S5P_NATIVE_SCALE_M)
-    # Fraction of native 1.1 km bins inside each coarse cell that survived screening.
     valid_frac = _to_grid_mean(composite.mask().rename("f"), grid, S5P_NATIVE_SCALE_M)
     return coarse.updateMask(valid_frac.gte(cfg.min_valid_subpixel_fraction)).rename(name)
 
 
-def fetch_s5p(dates: pd.DatetimeIndex, grid: GridSpec, cfg: PipelineConfig) -> np.ndarray:
+def _fetch_s5p_band(dates, grid, cfg, collection_id, band, mask_fn, label) -> np.ndarray:
     ee = _ee()
-    bands = _collection_bands(S5P_COLLECTION, str(dates[0].date()), str((dates[-1] + timedelta(days=1)).date()))
-    if not bands:
-        raise RuntimeError(f"No {S5P_COLLECTION} images between {dates[0].date()} and {dates[-1].date()}")
-    has_qa = "qa_value" in bands
-    log.info("S5P screening: %s", f"qa_value > {cfg.qa_threshold}" if has_qa else f"cloud_fraction < {cfg.max_cloud_fraction} (L3 is pre-filtered at QA>=0.75)")
     out = []
     for chunk in _chunks(dates, DAYS_PER_REQUEST):
         names = [f"d{i}" for i in range(len(chunk))]
-        image = ee.Image.cat(*[s5p_daily_image(d, grid, cfg, has_qa, n) for d, n in zip(chunk, names)])
+        image = ee.Image.cat(*[s5p_daily_image(d, grid, cfg, n, collection_id, band, mask_fn)
+                               for d, n in zip(chunk, names)])
         out.append(_compute_pixels(image, grid, names))
-        log.info("S5P fetched %s .. %s", chunk[0].date(), chunk[-1].date())
-    return np.concatenate(out, axis=0) * COLUMN_SCALE
+        log.info("%s fetched %s .. %s", label, chunk[0].date(), chunk[-1].date())
+    return np.concatenate(out, axis=0)
+
+
+def fetch_s5p(dates: pd.DatetimeIndex, grid: GridSpec, cfg: PipelineConfig) -> np.ndarray:
+    """Tropospheric NO2 (umol/m^2), cloud-screened.
+
+    L3 collections carry no qa_value band - QA >= 0.75 is applied during Google's L3 gridding - so the
+    per-pixel ``cloud_fraction`` is thresholded on top. A ``qa_value`` band, if present, is used instead.
+    """
+    collection_id = S5P_COLLECTION.format(product=cfg.s5p_product)
+    bands = _collection_bands(collection_id, str(dates[0].date()), str((dates[-1] + timedelta(days=1)).date()))
+    if not bands:
+        raise RuntimeError(f"No {collection_id} images between {dates[0].date()} and {dates[-1].date()}")
+    if "qa_value" in bands:
+        log.info("S5P %s screening: qa_value > %s", cfg.s5p_product, cfg.qa_threshold)
+        mask_fn = lambda img: img.select("qa_value").gt(cfg.qa_threshold)
+    else:
+        log.info("S5P %s screening: cloud_fraction < %s (L3 is pre-filtered at QA>=0.75)",
+                 cfg.s5p_product, cfg.max_cloud_fraction)
+        mask_fn = lambda img: img.select("cloud_fraction").lt(cfg.max_cloud_fraction)
+    return _fetch_s5p_band(dates, grid, cfg, collection_id, S5P_BAND, mask_fn, f"S5P NO2 {cfg.s5p_product}") * COLUMN_SCALE
+
+
+def fetch_co(dates: pd.DatetimeIndex, grid: GridSpec, cfg: PipelineConfig) -> np.ndarray:
+    """S5P total CO column (mmol/m^2), gap-free.
+
+    CO is co-emitted with NOx by combustion but lives for weeks, so it marks polluted air masses sitting
+    over the city. The L3 product is already QA-filtered; remaining gaps are filled spatially (nearest
+    cell) and, for fully missing days, by linear interpolation in time.
+    """
+    arr = _fetch_s5p_band(dates, grid, cfg, S5P_CO_COLLECTION, S5P_CO_BAND, None, "S5P CO") * CO_SCALE
+    for t in range(arr.shape[0]):
+        if np.isfinite(arr[t]).any():
+            arr[t] = fill_nan_nearest(arr[t])
+    flat = pd.DataFrame(arr.reshape(arr.shape[0], -1)).interpolate(limit_direction="both")
+    if flat.isna().all().all():
+        log.warning("No S5P CO retrievals in the period; CO feature disabled")
+        return np.full(arr.shape, np.nan, dtype=np.float32)
+    return flat.to_numpy(np.float32).reshape(arr.shape)
 
 
 # --------------------------------------------------------------------------------------------------
 # Meteorology
 # --------------------------------------------------------------------------------------------------
 def fetch_era5(dates: pd.DatetimeIndex, grid: GridSpec) -> dict[str, np.ndarray]:
+    """Wind, pressure and temperature averaged over the S5P overpass window (ERA5-Land hourly), so the
+    meteorology matches the atmosphere the satellite sampled. Days not yet in the hourly collection
+    fall back to the daily aggregate."""
     ee = _ee()
     keys = list(ERA5_BANDS)
+    bands = list(ERA5_BANDS.values())
     result = {k: [] for k in keys}
+    utc_hour = overpass_utc_hour((grid.west + grid.east) / 2.0)
     for chunk in _chunks(dates, DAYS_PER_REQUEST):
         images, names = [], []
         for i, day in enumerate(chunk):
-            col = ee.ImageCollection(ERA5_COLLECTION).filterDate(
+            centre = day + timedelta(hours=utc_hour)
+            hourly = ee.ImageCollection(ERA5_HOURLY_COLLECTION).filterDate(
+                (centre - timedelta(hours=OVERPASS_WINDOW_H)).isoformat(),
+                (centre + timedelta(hours=OVERPASS_WINDOW_H)).isoformat(),
+            )
+            daily = ee.ImageCollection(ERA5_COLLECTION).filterDate(
                 day.strftime("%Y-%m-%d"), (day + timedelta(days=1)).strftime("%Y-%m-%d")
             )
             day_names = [f"{k}_{i}" for k in keys]
             empty = ee.Image.cat(*[_empty(n) for n in day_names])
             img = ee.Image(
                 ee.Algorithms.If(
-                    col.size().gt(0),
-                    ee.Image(col.first()).select(list(ERA5_BANDS.values()), day_names),
-                    empty,
+                    hourly.size().gt(0),
+                    hourly.select(bands).mean().rename(day_names),
+                    ee.Algorithms.If(daily.size().gt(0), ee.Image(daily.first()).select(bands, day_names), empty),
                 )
             )
             images.append(img.resample("bilinear"))
@@ -234,7 +283,7 @@ def fetch_era5(dates: pd.DatetimeIndex, grid: GridSpec) -> dict[str, np.ndarray]
         arr = arr.reshape(len(chunk), len(keys), *grid.shape)
         for j, k in enumerate(keys):
             result[k].append(arr[:, j])
-        log.info("ERA5-Land fetched %s .. %s", chunk[0].date(), chunk[-1].date())
+        log.info("ERA5-Land (overpass hours) fetched %s .. %s", chunk[0].date(), chunk[-1].date())
     stacked = {k: np.concatenate(v, axis=0) for k, v in result.items()}
     # ERA5-Land is a land-only reanalysis: coastal/sea cells are masked, so fill them from the nearest land cell.
     for k, arr in stacked.items():
@@ -382,6 +431,7 @@ def load_gee(cfg: PipelineConfig, coarse: GridSpec, fine: GridSpec) -> tuple[xr.
     no2 = fetch_s5p(dates, coarse, cfg)
     met = fetch_era5(dates, coarse)
     blh = fetch_blh(dates, coarse)
+    co = fetch_co(dates, coarse, cfg)
     missing = ~np.isfinite(blh)
     if missing.any():
         log.warning("BLH unavailable for %.0f%% of cells/days; using bulk parametrisation there", 100 * missing.mean())
@@ -397,6 +447,7 @@ def load_gee(cfg: PipelineConfig, coarse: GridSpec, fine: GridSpec) -> tuple[xr.
             "sp": (dims, met["sp"], {"units": "Pa"}),
             "t2m": (dims, met["t2m"], {"units": "K"}),
             "blh": (dims, blh.astype(np.float32), {"units": "m"}),
+            "co": (dims, co, {"units": "mmol m-2", "long_name": "S5P total CO column"}),
         },
         coords=coords,
         attrs={"crs": coarse.crs, "source": "gee", "grid": str(coarse.to_dict())},

@@ -35,13 +35,13 @@ from .validation import summarize_predictions
 
 log = logging.getLogger(__name__)
 
-MET_VARS = ("blh", "u10", "v10", "t2m", "sp")
+MET_VARS = ("blh", "u10", "v10", "t2m", "sp", "co")  # "co" (S5P CO column) is used when ingested
 FOCAL_VARS = ("built_up", "road_density", "night_lights", "ghsl_built", "population")
 FOCAL_SIGMAS_PX = (2, 6)  # ~0.5 km and ~1.6 km neighbourhoods at 270 m pixels
 SATELLITE_FEATURES = ("column", "pbl_conc", "pbl_conc_mean")
 ANOMALY_SATELLITE = ("pbl_conc_anom",)
 # Drivers of day-to-day change: satellite anomaly, meteorology and calendar (static land use cannot vary in time).
-ANOMALY_FEATURES = ("pbl_conc_anom", "pbl_conc", "blh", "u10", "v10", "wind_speed", "t2m", "sp",
+ANOMALY_FEATURES = ("pbl_conc_anom", "pbl_conc", "co", "blh", "u10", "v10", "wind_speed", "t2m", "sp",
                     "day_of_week", "weekend")
 BASELINE_ONLY = ("pbl_conc_coarse",)
 
@@ -69,7 +69,7 @@ class SurfaceFeatureBuilder:
 
     def day_arrays(self, t: int) -> dict[str, np.ndarray]:
         f = self.factor
-        met = {k: upsample_bilinear(self.coarse[k].values[t].astype(np.float64), f) for k in MET_VARS}
+        met = {k: upsample_bilinear(self.coarse[k].values[t].astype(np.float64), f) for k in MET_VARS if k in self.coarse}
         col = self.column.values[t].astype(np.float64)
         shape = col.shape
         day = self.times[t]
