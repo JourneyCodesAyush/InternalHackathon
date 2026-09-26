@@ -1,26 +1,121 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg-core: #0d0f15;
+  --bg-surface: #141721;
+  --bg-elevated: #1b202e;
+  --bg-panel: #11141d;
+  --border-subtle: #242938;
+  --border-focus: #3b4257;
+  --text-main: #f1f3f7;
+  --text-secondary: #9da5b7;
+  --text-muted: #5e6678;
+  --accent-blue: #3b82f6;
+  --accent-blue-hover: #2563eb;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-core);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom crisp dark scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-core);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-focus);
+}
+
+/* Leaflet Custom Styles & Overrides */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  background: #090a0f !important;
+  font-family: inherit !important;
+}
+
+/* Dark mode invert filter for standard OSM tiles */
+.dark-map-tiles {
+  filter: brightness(0.62) invert(1) contrast(3.1) hue-rotate(200deg) saturate(0.28);
+}
+
+.leaflet-popup-content-wrapper {
+  background: #141721 !important;
+  color: #f1f3f7 !important;
+  border: 1px solid #2e3547 !important;
+  border-radius: 6px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7) !important;
+  padding: 0 !important;
+}
+
+.leaflet-popup-content {
+  margin: 12px 14px !important;
+  line-height: 1.4 !important;
+  font-size: 13px !important;
+}
+
+.leaflet-popup-tip {
+  background: #141721 !important;
+  border: 1px solid #2e3547 !important;
+}
+
+.leaflet-container a.leaflet-popup-close-button {
+  color: #9da5b7 !important;
+  padding: 6px 8px !important;
+}
+
+.leaflet-container a.leaflet-popup-close-button:hover {
+  color: #fff !important;
+}
+
+/* Instrument panel utility classes */
+.instrument-panel {
+  background: rgba(17, 20, 29, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.instrument-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.instrument-card:hover {
+  border-color: var(--border-focus);
+}
+
+.telemetry-value {
+  font-family: var(--font-mono);
+  letter-spacing: -0.02em;
+}
+
+/* Transition speed: crisp 150ms */
+.snappy-transition {
+  transition: all 150ms ease-out;
 }
