@@ -222,3 +222,4 @@ pyrightconfig.json
 backend/outputs/
 backend/models/
 backend/cache/
+backend/data/openaq_india_no2_hourly.csv

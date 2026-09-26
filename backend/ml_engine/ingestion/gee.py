@@ -42,6 +42,20 @@ ERA5_BANDS = {
     "sp": "surface_pressure",
     "t2m": "temperature_2m",
 }
+# Extra drivers of NO2 lifetime and mixing: sunlight (photolysis / OH), rain (washout), surface heating.
+# key -> (hourly band, scale to units), (daily-aggregate band, scale to the same units)
+ERA5_FLUX_BANDS = {
+    "ssrd": (("surface_solar_radiation_downwards_hourly", 1 / 3600), ("surface_solar_radiation_downwards_sum", 1 / 86400)),  # W m-2
+    "tp": (("total_precipitation_hourly", 1000.0), ("total_precipitation_sum", 1000.0 / 24)),  # mm h-1
+    "sshf": (("surface_sensible_heat_flux_hourly", 1 / 3600), ("surface_sensible_heat_flux_sum", 1 / 86400)),  # W m-2
+}
+GPPD_COLLECTION = "WRI/GPPD/power_plants"
+# GRIP4 global roads (community catalog). Road type GP_RTP: 1 highway, 2 primary, 3 secondary, 4 tertiary, 5 local.
+GRIP4_COLLECTION = "projects/sat-io/open-datasets/GRIP4/South-East-Asia"  # covers the Indian subcontinent
+ROAD_TYPE_WEIGHTS = [0.0, 3.0, 2.0, 1.5, 1.0, 0.3]  # index = GP_RTP; heavier traffic -> more NOx
+ROAD_PAINT_SCALE_M = 30
+COMBUSTION_FUELS = ("Coal", "Gas", "Oil", "Biomass", "Waste", "Petcoke", "Cogeneration")
+POWER_PLANT_SIGMA_KM = 3.0
 ERA5_BLH_BAND = "boundary_layer_height"
 GEOSCF_COLLECTION = "NASA/GEOS-CF/v1/rpl/tavg1hr"
 GEOSCF_BLH_BAND = "ZPBL"
@@ -253,8 +267,11 @@ def fetch_era5(dates: pd.DatetimeIndex, grid: GridSpec) -> dict[str, np.ndarray]
     meteorology matches the atmosphere the satellite sampled. Days not yet in the hourly collection
     fall back to the daily aggregate."""
     ee = _ee()
-    keys = list(ERA5_BANDS)
-    bands = list(ERA5_BANDS.values())
+    keys = [*ERA5_BANDS, *ERA5_FLUX_BANDS]
+    hourly_bands = [*ERA5_BANDS.values(), *(h[0] for h, _ in ERA5_FLUX_BANDS.values())]
+    daily_bands = [*ERA5_BANDS.values(), *(d[0] for _, d in ERA5_FLUX_BANDS.values())]
+    hourly_scale = ee.Image.constant([1.0] * len(ERA5_BANDS) + [h[1] for h, _ in ERA5_FLUX_BANDS.values()])
+    daily_scale = ee.Image.constant([1.0] * len(ERA5_BANDS) + [d[1] for _, d in ERA5_FLUX_BANDS.values()])
     result = {k: [] for k in keys}
     utc_hour = overpass_utc_hour((grid.west + grid.east) / 2.0)
     for chunk in _chunks(dates, DAYS_PER_REQUEST):
@@ -273,8 +290,10 @@ def fetch_era5(dates: pd.DatetimeIndex, grid: GridSpec) -> dict[str, np.ndarray]
             img = ee.Image(
                 ee.Algorithms.If(
                     hourly.size().gt(0),
-                    hourly.select(bands).mean().rename(day_names),
-                    ee.Algorithms.If(daily.size().gt(0), ee.Image(daily.first()).select(bands, day_names), empty),
+                    hourly.select(hourly_bands).mean().multiply(hourly_scale).rename(day_names),
+                    ee.Algorithms.If(daily.size().gt(0),
+                                     ee.Image(daily.first()).select(daily_bands).multiply(daily_scale).rename(day_names),
+                                     empty),
                 )
             )
             images.append(img.resample("bilinear"))
@@ -382,16 +401,54 @@ def fetch_static(grid: GridSpec, end_date: str) -> dict[str, np.ndarray]:
     )
     s2_arr = _compute_pixels(s2_fine, grid, ["ndvi", "built_up"])
 
-    activity_arr = _compute_pixels(_activity_image(grid, end), grid, list(ACTIVITY_BANDS))
+    activity_arr = _compute_pixels(_activity_image(grid, end).addBands(road_density_image(grid)), grid,
+                                   [*ACTIVITY_BANDS, "road_density"])
 
-    names = ["elevation", "slope", "ndvi", "built_up", *ACTIVITY_BANDS]
+    names = ["elevation", "slope", "ndvi", "built_up", *ACTIVITY_BANDS, "road_density"]
     arr = np.concatenate([terrain_arr, s2_arr, activity_arr], axis=0)
     static = {n: fill_nan_nearest(arr[i]) for i, n in enumerate(names)}
-    for n in ACTIVITY_BANDS:  # zero radiance / population / built surface over the sea
+    for n in (*ACTIVITY_BANDS, "road_density"):  # zero radiance / population / built surface / roads over the sea
         static[n] = np.nan_to_num(static[n], nan=0.0)
     static["elevation"] = np.nan_to_num(static["elevation"], nan=0.0)  # NASADEM is void over open sea
     static["slope"] = np.nan_to_num(static["slope"], nan=0.0)
     return static
+
+
+def road_density_image(grid: GridSpec):
+    """Traffic-weighted road density on ``grid`` from GRIP4: roads are painted 1 px wide at 30 m with a
+    weight per road class, then area-averaged - an absolute density (comparable between cities), unlike
+    a per-area normalised raster."""
+    ee = _ee()
+    pad = 0.05
+    region = ee.Geometry.Rectangle([grid.west - pad, grid.south - pad, grid.east + pad, grid.north + pad])
+    weights = ee.List(ROAD_TYPE_WEIGHTS)
+    roads = ee.FeatureCollection(GRIP4_COLLECTION).filterBounds(region).map(
+        lambda f: f.set("w", weights.get(ee.Number(f.get("GP_RTP")).int())))
+    painted = ee.Image.constant(0).toFloat().paint(roads, "w", 1).rename("road_density")
+    painted = painted.reproject(crs="EPSG:4326", scale=ROAD_PAINT_SCALE_M)
+    return painted.reduceResolution(reducer=ee.Reducer.mean(), maxPixels=1024).reproject(
+        crs=grid.crs, crsTransform=grid.crs_transform)
+
+
+def fetch_power_plants(grid: GridSpec) -> np.ndarray:
+    """Capacity-weighted combustion power-plant influence (MW-weighted Gaussian kernel, sigma 3 km, log1p).
+
+    Plants within ~50 km of the AOI are included so sources just outside the box still count.
+    """
+    ee = _ee()
+    pad = 0.5
+    region = ee.Geometry.Rectangle([grid.west - pad, grid.south - pad, grid.east + pad, grid.north + pad])
+    fc = ee.FeatureCollection(GPPD_COLLECTION).filterBounds(region).filter(
+        ee.Filter.inList("fuel1", list(COMBUSTION_FUELS)))
+    plants = [f["properties"] for f in fc.getInfo()["features"]]
+    lon, lat = grid.lonlat_mesh()
+    kx = 111.32 * np.cos(np.radians((grid.north + grid.south) / 2))
+    field = np.zeros(grid.shape)
+    for p in plants:
+        d2 = ((lon - p["longitude"]) * kx) ** 2 + ((lat - p["latitude"]) * 110.57) ** 2
+        field += float(p.get("capacitymw") or 0.0) * np.exp(-d2 / (2 * POWER_PLANT_SIGMA_KM**2))
+    log.info("Power plants: %d combustion plants within %.1f deg of the AOI", len(plants), pad)
+    return np.log1p(field).astype(np.float32)
 
 
 def _activity_image(grid: GridSpec, end: pd.Timestamp):
@@ -448,11 +505,15 @@ def load_gee(cfg: PipelineConfig, coarse: GridSpec, fine: GridSpec) -> tuple[xr.
             "t2m": (dims, met["t2m"], {"units": "K"}),
             "blh": (dims, blh.astype(np.float32), {"units": "m"}),
             "co": (dims, co, {"units": "mmol m-2", "long_name": "S5P total CO column"}),
+            "ssrd": (dims, met["ssrd"], {"units": "W m-2", "long_name": "surface solar radiation downwards"}),
+            "tp": (dims, met["tp"], {"units": "mm h-1", "long_name": "total precipitation"}),
+            "sshf": (dims, met["sshf"], {"units": "W m-2", "long_name": "surface sensible heat flux"}),
         },
         coords=coords,
         attrs={"crs": coarse.crs, "source": "gee", "grid": str(coarse.to_dict())},
     )
     static = fetch_static(fine, cfg.end_date)
+    static["power_plants"] = fetch_power_plants(fine)
     static_ds = xr.Dataset(
         {k: (("y", "x"), v.astype(np.float32)) for k, v in static.items()},
         coords={"y": fine.y, "x": fine.x},

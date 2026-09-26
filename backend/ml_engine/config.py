@@ -77,7 +77,8 @@ class PipelineConfig:
     model_dir: Path = Path("models/downscaler")
     cache_dir: Path = Path("cache")
     station_hours: tuple[int, int] | None = (12, 16)  # local hours averaged from hourly station data (S5P overpass ~13:30-14:30 IST); None = full day
-    fetch_osm_roads: bool = True  # download OSM major roads for road density when --roads is not given
+    surface_model_path: Path | None = None  # pre-trained surface model (e.g. models/national/surface_model.joblib)
+    fetch_osm_roads: bool = False  # replace GRIP4 road density with OSM major roads (slow, rate-limited)
     gapfill: GapFillConfig = field(default_factory=GapFillConfig)
     downscale: DownscaleConfig = field(default_factory=DownscaleConfig)
     dispersion: DispersionConfig = field(default_factory=DispersionConfig)
@@ -92,4 +93,5 @@ class PipelineConfig:
         d["output_dir"] = str(self.output_dir)
         d["model_dir"] = str(self.model_dir)
         d["cache_dir"] = str(self.cache_dir)
+        d["surface_model_path"] = str(self.surface_model_path) if self.surface_model_path else None
         return d

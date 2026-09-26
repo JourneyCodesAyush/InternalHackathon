@@ -31,7 +31,8 @@ log = logging.getLogger(__name__)
 
 MET_FEATURES = ("u10", "v10", "wind_speed", "blh", "sp", "t2m")
 CONTEXT_FEATURES = ("no2_ring", "no2_day_mean", "doy_sin", "doy_cos")
-STATIC_CANDIDATES = ("elevation", "slope", "ndvi", "built_up", "road_density", "night_lights", "ghsl_built", "population")
+STATIC_CANDIDATES = ("elevation", "slope", "ndvi", "built_up", "road_density", "night_lights", "ghsl_built",
+                     "population", "power_plants")
 
 MODEL_FILE = "xgb_downscaler.json"
 META_FILE = "metadata.json"

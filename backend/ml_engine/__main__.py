@@ -30,7 +30,12 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="OFFL = reprocessed (training); NRTI = near real time, for today's maps")
     p.add_argument("--station-hours", default="12-16",
                    help="local hours averaged from hourly station data, e.g. 12-16 (S5P overpass); 'all' = full day")
-    p.add_argument("--no-osm", action="store_true", help="do not download OpenStreetMap roads (gee source)")
+    p.add_argument("--surface-model", default=None,
+                   help="pre-trained surface model (e.g. models/national/surface_model.joblib); --stations then "
+                        "serve as an independent test instead of training data")
+    p.add_argument("--osm-roads", action="store_true",
+                   help="use OpenStreetMap roads instead of GRIP4 for road density (slow; not comparable with "
+                        "a nationally trained surface model)")
     p.add_argument("--ee-project", default=None, help="Google Cloud project registered for Earth Engine")
     p.add_argument("--qa", type=float, default=0.75, help="qa_value threshold when the collection has one")
     p.add_argument("--horizons", nargs="+", type=float, default=[1, 3, 6], help="forecast horizons in hours")
@@ -52,7 +57,8 @@ def main(argv=None) -> int:
     if args.end:
         cfg.end_date = args.end
     cfg.dispersion.horizons_h = tuple(args.horizons)
-    cfg.fetch_osm_roads = not args.no_osm
+    cfg.fetch_osm_roads = args.osm_roads
+    cfg.surface_model_path = Path(args.surface_model) if args.surface_model else None
     cfg.s5p_product = args.s5p_product
     if args.station_hours == "all":
         cfg.station_hours = None
@@ -93,6 +99,17 @@ def print_summary(r: dict, out_dir: Path) -> None:
     disp = r["dispersion"]
     print(f" Stage 3  dispersion: wind {disp['mean_speed_ms']:.1f} m/s heading {disp['plume_heading_deg']:.0f} deg; "
           f"domain mean by horizon {', '.join(f'+{k}h={v:.1f}' for k, v in disp['horizon_domain_mean_ugm3'].items())} ug/m3")
+    if "pretrained_surface_model" in r:
+        pm = r["pretrained_surface_model"]
+        print(f" Stage 4  pre-trained surface model {pm['model']} from {pm['source']}")
+        if "independent_test" in pm:
+            t = pm["independent_test"]
+            print(f"          INDEPENDENT TEST ({t['n_stations']} stations; this period was not used in training - station locations may overlap):")
+            print(f"            {_fmt(t['overall'])}")
+            print(f"            spatial R2={t['station_mean_spatial']['r2']:.2f}  temporal R2={t['temporal_anomaly']['r2']:.2f}"
+                  f"  median within-station r={t['median_within_station_r']:.2f}")
+            acc = t["acceptance"]
+            print(f"            acceptance (R2>={acc['min_r2']}, RMSE<={acc['max_rmse_ugm3']}): {'PASS' if acc['passed'] else 'FAIL'}")
     if "surface_model" in r:
         sm = r["surface_model"]
         print(f" Stage 4  surface model, {sm['cv']} - scored on stations AND dates unseen in training:")

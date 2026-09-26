@@ -20,13 +20,13 @@ from .downscaling import NO2Downscaler
 from .gapfill import SpatioTemporalGapFiller
 from .grid import GridSpec, upsample_bilinear
 from .ingestion import load_stations_csv, quality_control, road_density_from_geojson
-from .surface import SurfaceFeatureBuilder, select_surface_model
-from .validation import acceptance, regression_metrics, sample_at_stations
+from .surface import SurfaceFeatureBuilder, SurfaceModel, select_surface_model
+from .validation import acceptance, regression_metrics, sample_at_stations, summarize_predictions
 
 log = logging.getLogger(__name__)
 
 SURFACE_MODEL_FILE = "surface_model.joblib"
-GEE_CACHE_VERSION = 3  # bump when the set of ingested layers changes
+GEE_CACHE_VERSION = 5  # bump when the set of ingested layers changes
 
 
 @dataclass
@@ -133,7 +133,10 @@ class NO2Pipeline:
 
         # Stage 4 - station-trained surface model, scored on unseen stations (leave-stations-out CV)
         surface = pbl_conc
-        if stations is not None and len(stations):
+        if cfg.surface_model_path:
+            surface = self._apply_pretrained_surface(cfg, static, coarse, gf, column_fine, stations, report, out_dir,
+                                                     export_outputs)
+        elif stations is not None and len(stations):
             with self._timer("surface_model"):
                 builder = SurfaceFeatureBuilder(static, coarse, gf.filled, column_fine, cfg.refine_factor)
                 table = builder.station_table(stations, self.fine_grid)
@@ -183,6 +186,29 @@ class NO2Pipeline:
             report["outputs"] = result.outputs
             export.write_json(report, out_dir / "report.json")
         return result
+
+    def _apply_pretrained_surface(self, cfg, static, coarse, gf, column_fine, stations, report, out_dir, export_outputs):
+        """Map with a surface model trained elsewhere (e.g. ``ml_engine.national``); local stations, if given,
+        become an independent test of this period (their locations may also appear in the training set)."""
+        model = SurfaceModel.load(cfg.surface_model_path)
+        builder = SurfaceFeatureBuilder(static, coarse, gf.filled, column_fine, cfg.refine_factor)
+        missing = [f for f in model.input_features if f not in builder.names]
+        if missing:
+            raise ValueError(f"Pre-trained surface model needs inputs this run lacks: {missing}")
+        with self._timer("surface_model"):
+            surface = builder.predict_map(model)
+        info = {"source": str(cfg.surface_model_path), "model": model.name}
+        if stations is not None and len(stations):
+            table = builder.station_table(stations, self.fine_grid)
+            table["pred"] = model.predict(table)
+            summary = summarize_predictions(table, pred_col="pred")
+            summary["acceptance"] = acceptance(summary["overall"], cfg.validation.min_r2, cfg.validation.max_rmse_ugm3)
+            info["independent_test"] = summary
+            if export_outputs:
+                table[["station_id", "lat", "lon", "date", "no2", "pred"]].to_csv(
+                    out_dir / "independent_test_station_predictions.csv", index=False)
+        report["pretrained_surface_model"] = info
+        return surface
 
     # ---------------------------------------------------------------- stage 5
     def export(self, res: PipelineResult, u: np.ndarray, v: np.ndarray) -> dict:

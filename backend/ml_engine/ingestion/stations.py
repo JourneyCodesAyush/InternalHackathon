@@ -15,7 +15,8 @@ from ..grid import GridSpec
 STATION_COLUMNS = ["station_id", "lat", "lon", "date", "no2"]
 
 
-def load_stations_csv(path: str | Path, hours: tuple[int, int] | None = (12, 16)) -> pd.DataFrame:
+def load_stations_csv(path: str | Path, hours: tuple[int, int] | None = (12, 16),
+                      min_completeness: float = 0.75) -> pd.DataFrame:
     """Load station NO2 as one value per station-day.
 
     Required columns: ``station_id, lat, lon, date, no2`` (no2 in ug/m^3). ``date`` is YYYY-MM-DD for daily
@@ -23,7 +24,8 @@ def load_stations_csv(path: str | Path, hours: tuple[int, int] | None = (12, 16)
 
     Hourly data is averaged over ``hours`` = [start, end) local time only, matching the ~13:30 local solar
     time Sentinel-5P overpass instead of a 24 h mean the satellite never sees; ``None`` averages the whole day.
-    Daily data is used as is.
+    Daily data is used as is. A day from hourly data is kept only if at least ``min_completeness`` of the
+    window's hours are present (the 75% validity rule used by EPA / CPCB for averaged concentrations).
     """
     df = pd.read_csv(path)
     df.columns = [c.strip().lower() for c in df.columns]
@@ -43,7 +45,12 @@ def load_stations_csv(path: str | Path, hours: tuple[int, int] | None = (12, 16)
     agg = {"lat": "first", "lon": "first", "no2": "mean"}
     if "name" in df.columns:
         agg["name"] = "first"
-    return df.groupby(group, as_index=False).agg(agg)
+    daily = df.groupby(group, as_index=False).agg(agg)
+    if hourly:
+        expected = (hours[1] - hours[0]) if hours is not None else 24
+        counts = df.groupby(group)["no2"].count().to_numpy()
+        daily = daily[counts >= np.ceil(min_completeness * expected)]
+    return daily
 
 
 def quality_control(df: pd.DataFrame, min_cv: float = 0.10, min_days: int = 15, low_fraction: float = 0.25,

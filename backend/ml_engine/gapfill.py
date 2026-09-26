@@ -28,10 +28,10 @@ log = logging.getLogger(__name__)
 
 FLAG_OBSERVED, FLAG_RF, FLAG_MOSAIC, FLAG_SPATIAL = 0, 1, 2, 3
 FLAG_MEANINGS = "observed rf_imputed median_mosaic climatology_or_spatial"
-MET_VARS = ("blh", "u10", "v10", "sp", "t2m", "co")
+MET_VARS = ("blh", "u10", "v10", "sp", "t2m", "co", "ssrd", "tp")
 FEATURES = (
     "lat", "lon", "doy_sin", "doy_cos", "lag1", "lag2", "ring3", "ring5", "climatology", "day_mean",
-    "blh", "u10", "v10", "wind_speed", "sp", "t2m", "co",
+    "blh", "u10", "v10", "wind_speed", "sp", "t2m", "co", "ssrd", "tp",
 )
 
 
@@ -196,5 +196,6 @@ class SpatioTemporalGapFiller:
             "blh": met.get("blh", nan), "u10": met.get("u10", nan), "v10": met.get("v10", nan),
             "wind_speed": np.hypot(met["u10"], met["v10"]) if "u10" in met and "v10" in met else nan,
             "sp": met.get("sp", nan), "t2m": met.get("t2m", nan), "co": met.get("co", nan),
+            "ssrd": met.get("ssrd", nan), "tp": met.get("tp", nan),
         }
         return np.stack([np.asarray(cols[f], dtype=np.float32).ravel() for f in FEATURES], axis=1)
