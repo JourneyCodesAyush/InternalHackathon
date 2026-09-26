@@ -8,10 +8,12 @@ station-to-station differences are dominated by local emissions (roads, activity
 * meteorology: BLH, wind, temperature, pressure;
 * land use at the station pixel and in ~0.5 km / ~1.6 km neighbourhoods: built-up, roads,
   night lights, population;
-* calendar: season and day of week (traffic cycle).
+* calendar: day of week (traffic cycle). Day-of-year is deliberately excluded: over a few months each
+  value identifies a single date, letting the model memorise citywide daily levels from other stations
+  instead of predicting them from satellite and meteorology.
 
-Candidate models are compared with grouped K-fold cross-validation where every fold holds out whole
-stations, so each score is measured on stations the model never saw. The best selectable candidate is
+Candidate models are compared with space-time blocked cross-validation: every score is measured on
+stations *and* dates the model never saw (see ``space_time_folds``). The best selectable candidate is
 refitted on all stations and used for the map.
 """
 
@@ -26,7 +28,6 @@ import xarray as xr
 import xgboost as xgb
 from scipy import ndimage
 from sklearn.linear_model import HuberRegressor
-from sklearn.model_selection import GroupKFold
 
 from .downscaling import column_to_surface
 from .grid import GridSpec, upsample_bilinear
@@ -41,7 +42,7 @@ SATELLITE_FEATURES = ("column", "pbl_conc", "pbl_conc_mean")
 ANOMALY_SATELLITE = ("pbl_conc_anom",)
 # Drivers of day-to-day change: satellite anomaly, meteorology and calendar (static land use cannot vary in time).
 ANOMALY_FEATURES = ("pbl_conc_anom", "pbl_conc", "blh", "u10", "v10", "wind_speed", "t2m", "sp",
-                    "doy_sin", "doy_cos", "day_of_week", "weekend")
+                    "day_of_week", "weekend")
 BASELINE_ONLY = ("pbl_conc_coarse",)
 
 XGB_PARAMS = dict(n_estimators=400, max_depth=3, learning_rate=0.03, subsample=0.8, colsample_bytree=0.7,
@@ -72,7 +73,6 @@ class SurfaceFeatureBuilder:
         col = self.column.values[t].astype(np.float64)
         shape = col.shape
         day = self.times[t]
-        ang = 2 * np.pi * day.dayofyear / 365.25
         out = dict(self.static)
         out.update(met)
         out["wind_speed"] = np.hypot(met["u10"], met["v10"])
@@ -80,8 +80,6 @@ class SurfaceFeatureBuilder:
         out["pbl_conc"] = column_to_surface(col, met["blh"])
         out["pbl_conc_anom"] = out["pbl_conc"] - self.static["pbl_conc_mean"]
         out["pbl_conc_coarse"] = column_to_surface(upsample_bilinear(self.no2_coarse[t], f), met["blh"])
-        out["doy_sin"] = np.full(shape, np.sin(ang))
-        out["doy_cos"] = np.full(shape, np.cos(ang))
         out["day_of_week"] = np.full(shape, float(day.dayofweek))
         out["weekend"] = np.full(shape, float(day.dayofweek >= 5))
         return out
@@ -190,14 +188,65 @@ def candidate_models(feature_names: list[str]) -> dict[str, tuple[SurfaceModel, 
     }
 
 
-def select_surface_model(table: pd.DataFrame, feature_names: list[str], n_folds: int = 5) -> tuple[SurfaceModel, dict, pd.DataFrame]:
+def space_time_folds(table: pd.DataFrame, n_blocks: int = 5) -> tuple[list[tuple[np.ndarray, np.ndarray]], str]:
+    """Space-time blocked CV: every fold tests one station group x one contiguous date block and trains
+    only on the *other* stations on the *other* dates.
+
+    Plain leave-stations-out CV leaks: other stations' readings on the same dates stay in training, and
+    date-specific inputs (citywide meteorology) let a model memorise each day's citywide level. Blocking
+    both space and time reproduces the real use of the map - an unmonitored place on an unseen day.
+    """
+    stations = np.array(sorted(table["station_id"].unique()))
+    n_s = max(2, min(n_blocks, len(stations)))
+    station_group = {sid: i % n_s for i, sid in enumerate(np.random.default_rng(0).permutation(stations))}
+    dates = np.sort(table["date"].unique())
+    n_t = max(2, min(n_blocks, len(dates)))
+    date_block = {d: i for i, chunk in enumerate(np.array_split(dates, n_t)) for d in chunk}
+    sg = table["station_id"].map(station_group).to_numpy()
+    tb = table["date"].map(date_block).to_numpy()
+    folds = []
+    for i in range(n_s):
+        for j in range(n_t):
+            te = np.flatnonzero((sg == i) & (tb == j))
+            tr = np.flatnonzero((sg != i) & (tb != j))
+            if len(te) and len(tr):
+                folds.append((tr, te))
+    return folds, f"space-time blocked CV: {n_s} station groups x {n_t} date blocks over {len(stations)} stations"
+
+
+def evaluate_future_days(table: pd.DataFrame, proto: SurfaceModel, test_fraction: float = 0.2) -> dict:
+    """Skill on *future days at monitored stations* - the operational forecasting use case.
+
+    The last ``test_fraction`` of dates is held out. The model is trained on earlier days of every
+    station, and each station's mean training residual is applied as a bias correction (standard for
+    monitored sites, and it absorbs inter-network calibration offsets). Compared against the naive
+    baseline of predicting each station's own training-period mean.
+    """
+    dates = np.sort(table["date"].unique())
+    cutoff = dates[int(np.floor(len(dates) * (1 - test_fraction)))]
+    train, test = table[table["date"] < cutoff], table[table["date"] >= cutoff].copy()
+    test = test[test["station_id"].isin(train["station_id"].unique())]
+    model = SurfaceModel(proto.name, proto.kind, proto.features).fit(train)
+    offset = (train["no2"] - model.predict(train)).groupby(train["station_id"]).mean()
+    test["pred"] = model.predict(test) + test["station_id"].map(offset).to_numpy()
+    test["baseline"] = test["station_id"].map(train.groupby("station_id")["no2"].mean()).to_numpy()
+    model_summary = summarize_predictions(test, pred_col="pred")
+    return {
+        "setup": (f"train on dates < {pd.Timestamp(cutoff).date()} ({len(dates) - len(test['date'].unique())} days), "
+                  f"test on the last {test['date'].nunique()} days at the same {test['station_id'].nunique()} stations, "
+                  "with per-station bias correction from the training period"),
+        "model": model_summary,
+        "baseline_station_training_mean": summarize_predictions(test, pred_col="baseline"),
+    }
+
+
+def select_surface_model(table: pd.DataFrame, feature_names: list[str], n_folds: int = 5,
+                         future_fraction: float = 0.2) -> tuple[SurfaceModel, dict, pd.DataFrame]:
     """Leave-stations-out CV of every candidate; returns (best model refitted on all data, report, OOF table)."""
-    groups = table["station_id"].values
-    n_folds = max(2, min(n_folds, len(np.unique(groups))))
-    folds = list(GroupKFold(n_splits=n_folds).split(table, groups=groups))
+    folds, cv_desc = space_time_folds(table, n_folds)
     oof = table[["station_id", "name", "lat", "lon", "date", "no2"]].copy() if "name" in table else \
         table[["station_id", "lat", "lon", "date", "no2"]].copy()
-    report: dict = {"cv": f"GroupKFold({n_folds}) over {len(np.unique(groups))} stations", "candidates": {}}
+    report: dict = {"cv": cv_desc, "candidates": {}}
     candidates = candidate_models(feature_names)
     for name, (proto, selectable) in candidates.items():
         pred = np.full(len(table), np.nan)
@@ -217,4 +266,5 @@ def select_surface_model(table: pd.DataFrame, feature_names: list[str], n_folds:
     model = SurfaceModel(proto.name, proto.kind, proto.features).fit(table)
     report["selected"] = best
     report["feature_importance"] = model.importance()
+    report["future_days_monitored_stations"] = evaluate_future_days(table, proto, future_fraction)
     return model, report, oof

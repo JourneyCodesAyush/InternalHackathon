@@ -55,7 +55,8 @@ class DispersionConfig:
 
 @dataclass
 class ValidationConfig:
-    cv_folds: int = 5  # grouped K-fold: each fold holds out whole stations
+    cv_folds: int = 5  # station groups and date blocks for space-time blocked CV
+    future_days_fraction: float = 0.2  # last share of days held out for the monitored-station check
     min_r2: float = 0.6  # acceptance thresholds reported as pass/fail
     max_rmse_ugm3: float = 15.0
 

@@ -137,11 +137,14 @@ class NO2Pipeline:
             with self._timer("surface_model"):
                 builder = SurfaceFeatureBuilder(static, coarse, gf.filled, column_fine, cfg.refine_factor)
                 table = builder.station_table(stations, self.fine_grid)
-                surface_model, selection, oof = select_surface_model(table, builder.names, cfg.validation.cv_folds)
+                surface_model, selection, oof = select_surface_model(
+                    table, builder.names, cfg.validation.cv_folds, cfg.validation.future_days_fraction)
                 surface_model.save(Path(cfg.model_dir) / SURFACE_MODEL_FILE)
                 surface = builder.predict_map(surface_model)
             best = selection["candidates"][selection["selected"]]
             best["acceptance"] = acceptance(best["overall"], cfg.validation.min_r2, cfg.validation.max_rmse_ugm3)
+            future = selection["future_days_monitored_stations"]["model"]
+            future["acceptance"] = acceptance(future["overall"], cfg.validation.min_r2, cfg.validation.max_rmse_ugm3)
             report["surface_model"] = selection
             if truth is not None:  # best achievable score given the synthetic station noise
                 ceiling = sample_at_stations(truth["surface"], stations, self.fine_grid)

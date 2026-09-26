@@ -85,7 +85,7 @@ def print_summary(r: dict, out_dir: Path) -> None:
           f"domain mean by horizon {', '.join(f'+{k}h={v:.1f}' for k, v in disp['horizon_domain_mean_ugm3'].items())} ug/m3")
     if "surface_model" in r:
         sm = r["surface_model"]
-        print(f" Stage 4  surface model, {sm['cv']} (every score on stations unseen in training):")
+        print(f" Stage 4  surface model, {sm['cv']} - scored on stations AND dates unseen in training:")
         for name, c in sm["candidates"].items():
             mark = "*" if name == sm["selected"] else " "
             print(f"        {mark} {name:30s} {_fmt(c['overall'])}")
@@ -93,7 +93,14 @@ def print_summary(r: dict, out_dir: Path) -> None:
                   f"  median within-station r={c['median_within_station_r']:.2f}")
         best = sm["candidates"][sm["selected"]]
         acc = best["acceptance"]
-        print(f"          acceptance (R2>={acc['min_r2']}, RMSE<={acc['max_rmse_ugm3']}): {'PASS' if acc['passed'] else 'FAIL'}")
+        print(f"          acceptance on UNSEEN STATIONS (R2>={acc['min_r2']}, RMSE<={acc['max_rmse_ugm3']}): "
+              f"{'PASS' if acc['passed'] else 'FAIL'}")
+        fut = sm["future_days_monitored_stations"]
+        print(f"          future days at monitored stations: {fut['setup']}")
+        print(f"            model    {_fmt(fut['model']['overall'])}  temporal R2={fut['model']['temporal_anomaly']['r2']:.2f}")
+        print(f"            baseline {_fmt(fut['baseline_station_training_mean']['overall'])}  (station's own training mean)")
+        facc = fut["model"]["acceptance"]
+        print(f"            acceptance on FUTURE DAYS: {'PASS' if facc['passed'] else 'FAIL'}")
         top = ", ".join(f"{k}={v:.2f}" for k, v in list(sm["feature_importance"].items())[:6])
         print(f"          top features: {top}")
         if "validation_noise_ceiling_synthetic" in r:
