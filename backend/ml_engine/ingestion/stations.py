@@ -37,6 +37,40 @@ def load_stations_csv(path: str | Path) -> pd.DataFrame:
     return df.groupby(group, as_index=False).agg(agg)
 
 
+def quality_control(df: pd.DataFrame, min_cv: float = 0.10, min_days: int = 15,
+                    low_fraction: float = 0.25) -> tuple[pd.DataFrame, dict]:
+    """Remove stuck-analyser data from daily station NO2.
+
+    * Row level: a day identical (+-0.05 ug/m^3) to the previous valid day is a frozen reading.
+    * Station level: drop stations whose coefficient of variation is below ``min_cv`` (a flat line
+      over weeks is not physically plausible for urban NO2) or with fewer than ``min_days`` days left.
+    * Stations whose mean is below ``low_fraction`` x the network median are only *flagged*: low values
+      can be genuine (e.g. a station inside a national park).
+    """
+    df = df.sort_values(["station_id", "date"]).copy()
+    frozen = df.groupby("station_id")["no2"].diff().abs() < 0.05
+    cleaned = df[~frozen]
+    stats = cleaned.groupby("station_id")["no2"].agg(["count", "mean", "std"])
+    stats["cv"] = stats["std"] / stats["mean"]
+    network_median = float(stats["mean"].median())
+    dropped = {}
+    for sid, row in stats.iterrows():
+        if row["count"] < min_days:
+            dropped[sid] = f"only {int(row['count'])} valid days"
+        elif row["cv"] < min_cv:
+            dropped[sid] = f"flat-lined (CV={row['cv']:.2f})"
+    flagged = {sid: f"mean {row['mean']:.1f} vs network median {network_median:.1f}"
+               for sid, row in stats.iterrows()
+               if sid not in dropped and row["mean"] < low_fraction * network_median}
+    out = cleaned[~cleaned["station_id"].isin(dropped)]
+    report = {
+        "rows_in": int(len(df)), "frozen_rows_removed": int(frozen.sum()), "rows_out": int(len(out)),
+        "stations_in": int(df["station_id"].nunique()), "stations_out": int(out["station_id"].nunique()),
+        "dropped_stations": dropped, "flagged_low_stations": flagged,
+    }
+    return out, report
+
+
 def road_density_from_geojson(path: str | Path, grid: GridSpec, smooth_px: float = 2.0) -> np.ndarray:
     """Rasterise road lines (e.g. an OSM export) into a smoothed 0..1 density surface on ``grid``.
 

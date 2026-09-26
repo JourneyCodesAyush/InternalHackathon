@@ -17,7 +17,7 @@ from .dispersion import AdvectionDiffusionSolver, transport_summary
 from .downscaling import CALIBRATOR_FILE, NO2Downscaler, SurfaceCalibrator, column_to_surface
 from .gapfill import SpatioTemporalGapFiller
 from .grid import GridSpec, upsample_bilinear
-from .ingestion import load_stations_csv, road_density_from_geojson
+from .ingestion import load_stations_csv, quality_control, road_density_from_geojson
 from .validation import StationValidator, regression_metrics, sample_at_stations, split_stations
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,14 @@ class NO2Pipeline:
     def ingest(self, source: str, stations_csv: str | None = None, roads_geojson: str | None = None,
                ee_project: str | None = None, seed: int = 0):
         truth = None
-        stations = load_stations_csv(stations_csv) if stations_csv else None
+        self.station_qc = None
+        stations = None
+        if stations_csv:
+            stations, self.station_qc = quality_control(load_stations_csv(stations_csv))
+            log.info("Station QC: %d/%d stations kept, %d frozen readings removed, dropped=%s, flagged low=%s",
+                     self.station_qc["stations_out"], self.station_qc["stations_in"],
+                     self.station_qc["frozen_rows_removed"], list(self.station_qc["dropped_stations"]),
+                     list(self.station_qc["flagged_low_stations"]))
         with self._timer("ingest"):
             if source == "synthetic":
                 from .ingestion import synthetic
@@ -76,6 +83,8 @@ class NO2Pipeline:
             "config": cfg.to_dict(),
             "grids": {"coarse": self.coarse_grid.to_dict(), "fine": self.fine_grid.to_dict()},
         }
+        if self.station_qc:
+            report["station_qc"] = self.station_qc
 
         # Stage 1 ------------------------------------------------------------------------------
         filler = SpatioTemporalGapFiller(cfg.gapfill)
