@@ -44,6 +44,10 @@ DEM_IMAGE = "NASA/NASADEM_HGT/001"
 S2_COLLECTION = "COPERNICUS/S2_SR_HARMONIZED"
 
 S2_MAX_SCENES = 40
+VIIRS_COLLECTION = "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG"
+GHSL_BUILT_COLLECTION = "JRC/GHSL/P2023A/GHS_BUILT_S"
+GHSL_POP_COLLECTION = "JRC/GHSL/P2023A/GHS_POP"
+ACTIVITY_BANDS = ("night_lights", "ghsl_built", "population")
 
 NODATA = -9999.0
 DAYS_PER_REQUEST = 20
@@ -52,6 +56,11 @@ DAYS_PER_REQUEST = 20
 def initialize(project: str | None = None, service_account: str | None = None, key_file: str | None = None) -> None:
     """Initialise Earth Engine with a service account or the user's stored OAuth credentials."""
     import ee
+    import truststore
+
+    # Verify TLS against the OS certificate store, so networks with HTTPS inspection (corporate proxies,
+    # antivirus) whose root CA is trusted by Windows/macOS but absent from certifi still work.
+    truststore.inject_into_ssl()
 
     if service_account and key_file:
         credentials = ee.ServiceAccountCredentials(service_account, key_file)
@@ -283,7 +292,7 @@ def estimate_blh(t2m_k: np.ndarray, u10: np.ndarray, v10: np.ndarray) -> np.ndar
 # Static fine-scale covariates
 # --------------------------------------------------------------------------------------------------
 def fetch_static(grid: GridSpec, end_date: str) -> dict[str, np.ndarray]:
-    """Elevation, slope, NDVI and built-up fraction at the fine grid resolution."""
+    """Elevation, slope, NDVI, built-up fraction and activity proxies at the fine grid resolution."""
     ee = _ee()
     region = ee.Geometry.Rectangle(list(grid.bbox), proj=grid.crs, geodesic=False)
 
@@ -324,12 +333,44 @@ def fetch_static(grid: GridSpec, end_date: str) -> dict[str, np.ndarray]:
     )
     s2_arr = _compute_pixels(s2_fine, grid, ["ndvi", "built_up"])
 
-    names = ["elevation", "slope", "ndvi", "built_up"]
-    arr = np.concatenate([terrain_arr, s2_arr], axis=0)
+    activity_arr = _compute_pixels(_activity_image(grid, end), grid, list(ACTIVITY_BANDS))
+
+    names = ["elevation", "slope", "ndvi", "built_up", *ACTIVITY_BANDS]
+    arr = np.concatenate([terrain_arr, s2_arr, activity_arr], axis=0)
     static = {n: fill_nan_nearest(arr[i]) for i, n in enumerate(names)}
+    for n in ACTIVITY_BANDS:  # zero radiance / population / built surface over the sea
+        static[n] = np.nan_to_num(static[n], nan=0.0)
     static["elevation"] = np.nan_to_num(static["elevation"], nan=0.0)  # NASADEM is void over open sea
     static["slope"] = np.nan_to_num(static["slope"], nan=0.0)
     return static
+
+
+def _activity_image(grid: GridSpec, end: pd.Timestamp):
+    """Human-activity proxies for NOx emissions (land-use-regression style covariates).
+
+    * night_lights: VIIRS monthly night-time radiance, median of the 12 months before ``end`` -
+      tracks traffic, commerce and industry intensity.
+    * ghsl_built: GHSL built-up surface fraction (0-1) for the nearest 5-year epoch.
+    * population: GHSL residents per 100 m cell for the same epoch.
+    """
+    ee = _ee()
+    start = (end - timedelta(days=365)).strftime("%Y-%m-%d")
+    stop = (end + timedelta(days=1)).strftime("%Y-%m-%d")
+    lights_col = ee.ImageCollection(VIIRS_COLLECTION).filterDate(start, stop).select("avg_rad")
+    lights = lights_col.median().setDefaultProjection(ee.Image(lights_col.first()).projection())
+
+    epoch = min(2030, 5 * (end.year // 5))
+    def ghsl(collection_id: str, band: str):
+        img = ee.ImageCollection(collection_id).filter(ee.Filter.calendarRange(epoch, epoch, "year")).first()
+        return ee.Image(img).select(band)
+
+    built = ghsl(GHSL_BUILT_COLLECTION, "built_surface").divide(10_000)  # m^2 per 100 m cell -> fraction
+    pop = ghsl(GHSL_POP_COLLECTION, "population_count")
+    return ee.Image.cat(
+        _to_grid_mean(lights.rename("night_lights"), grid),
+        _to_grid_mean(built.rename("ghsl_built"), grid),
+        _to_grid_mean(pop.rename("population"), grid),
+    )
 
 
 # --------------------------------------------------------------------------------------------------

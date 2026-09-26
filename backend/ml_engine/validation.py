@@ -32,17 +32,6 @@ def regression_metrics(y_true, y_pred) -> dict:
     }
 
 
-def split_stations(stations: pd.DataFrame, test_fraction: float, random_state: int) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split by *station* (not by row) so validation stations are spatially unseen."""
-    ids = np.array(sorted(stations["station_id"].unique()))
-    rng = np.random.default_rng(random_state)
-    rng.shuffle(ids)
-    n_test = max(1, int(round(len(ids) * test_fraction))) if len(ids) > 1 else 0
-    test_ids = set(ids[:n_test])
-    is_test = stations["station_id"].isin(test_ids)
-    return stations[~is_test].copy(), stations[is_test].copy()
-
-
 def sample_at_stations(field: xr.DataArray, stations: pd.DataFrame, grid: GridSpec) -> pd.DataFrame:
     """Attach the model value of the grid cell containing each station on the matching date."""
     df = stations.copy()
@@ -58,29 +47,32 @@ def sample_at_stations(field: xr.DataArray, stations: pd.DataFrame, grid: GridSp
     return df[np.isfinite(df["predicted"])]
 
 
-class StationValidator:
-    def __init__(self, grid: GridSpec, min_r2: float = 0.6, max_rmse: float = 15.0):
-        self.grid = grid
-        self.min_r2 = min_r2
-        self.max_rmse = max_rmse
+def summarize_predictions(df: pd.DataFrame, obs_col: str = "no2", pred_col: str = "pred") -> dict:
+    """Skill of station predictions, split into its spatial and temporal parts.
 
-    def validate(self, surface: xr.DataArray, stations: pd.DataFrame) -> dict:
-        matched = sample_at_stations(surface, stations, self.grid)
-        overall = regression_metrics(matched["no2"], matched["predicted"])
-        per_station = {
-            sid: regression_metrics(g["no2"], g["predicted"]) | {"lat": float(g["lat"].iloc[0]), "lon": float(g["lon"].iloc[0])}
-            for sid, g in matched.groupby("station_id")
-        }
-        # Spatial skill: station-mean observed vs predicted (removes day-to-day covariance).
-        means = matched.groupby("station_id")[["no2", "predicted"]].mean()
-        return {
-            "overall": overall,
-            "station_mean_spatial": regression_metrics(means["no2"], means["predicted"]),
-            "per_station": per_station,
-            "n_stations": int(matched["station_id"].nunique()),
-            "acceptance": {
-                "min_r2": self.min_r2, "max_rmse_ugm3": self.max_rmse,
-                "passed": bool(overall["r2"] >= self.min_r2 and overall["rmse"] <= self.max_rmse),
-            },
-            "matched": matched,
-        }
+    * overall: every station-day pooled.
+    * station_mean_spatial: station-mean observed vs predicted - can the model rank locations?
+    * temporal_anomaly: departures from each station's own mean - does it track day-to-day changes?
+    """
+    d = df[[c for c in ("station_id", "lat", "lon", obs_col, pred_col) if c in df]].dropna()
+    means = d.groupby("station_id")[[obs_col, pred_col]].transform("mean")
+    station_means = d.groupby("station_id")[[obs_col, pred_col]].mean()
+    within_r = d.groupby("station_id").apply(
+        lambda g: np.corrcoef(g[obs_col], g[pred_col])[0, 1] if len(g) > 5 and g[pred_col].std() > 0 else np.nan)
+    per_station = {
+        sid: regression_metrics(g[obs_col], g[pred_col]) | {"lat": float(g["lat"].iloc[0]), "lon": float(g["lon"].iloc[0])}
+        for sid, g in d.groupby("station_id")
+    }
+    return {
+        "overall": regression_metrics(d[obs_col], d[pred_col]),
+        "station_mean_spatial": regression_metrics(station_means[obs_col], station_means[pred_col]),
+        "temporal_anomaly": regression_metrics(d[obs_col] - means[obs_col], d[pred_col] - means[pred_col]),
+        "median_within_station_r": float(np.nanmedian(within_r)) if len(within_r) else float("nan"),
+        "n_stations": int(d["station_id"].nunique()),
+        "per_station": per_station,
+    }
+
+
+def acceptance(metrics: dict, min_r2: float, max_rmse: float) -> dict:
+    return {"min_r2": min_r2, "max_rmse_ugm3": max_rmse,
+            "passed": bool(metrics["r2"] >= min_r2 and metrics["rmse"] <= max_rmse)}

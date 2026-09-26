@@ -55,8 +55,7 @@ class DispersionConfig:
 
 @dataclass
 class ValidationConfig:
-    test_station_fraction: float = 0.3  # stations held out entirely from calibration
-    random_state: int = 7
+    cv_folds: int = 5  # grouped K-fold: each fold holds out whole stations
     min_r2: float = 0.6  # acceptance thresholds reported as pass/fail
     max_rmse_ugm3: float = 15.0
 
@@ -74,6 +73,8 @@ class PipelineConfig:
     crs: str = DEFAULT_CRS
     output_dir: Path = Path("outputs")
     model_dir: Path = Path("models/downscaler")
+    cache_dir: Path = Path("cache")
+    fetch_osm_roads: bool = True  # download OSM major roads for road density when --roads is not given
     gapfill: GapFillConfig = field(default_factory=GapFillConfig)
     downscale: DownscaleConfig = field(default_factory=DownscaleConfig)
     dispersion: DispersionConfig = field(default_factory=DispersionConfig)
@@ -87,4 +88,5 @@ class PipelineConfig:
         d = asdict(self)
         d["output_dir"] = str(self.output_dir)
         d["model_dir"] = str(self.model_dir)
+        d["cache_dir"] = str(self.cache_dir)
         return d

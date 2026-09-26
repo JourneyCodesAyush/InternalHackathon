@@ -37,36 +37,56 @@ def load_stations_csv(path: str | Path) -> pd.DataFrame:
     return df.groupby(group, as_index=False).agg(agg)
 
 
-def quality_control(df: pd.DataFrame, min_cv: float = 0.10, min_days: int = 15,
-                    low_fraction: float = 0.25) -> tuple[pd.DataFrame, dict]:
-    """Remove stuck-analyser data from daily station NO2.
+def quality_control(df: pd.DataFrame, min_cv: float = 0.10, min_days: int = 15, low_fraction: float = 0.25,
+                    neighbour_km: float = 2.0, neighbour_ratio: float = 3.0) -> tuple[pd.DataFrame, dict]:
+    """Remove faulty-analyser data from daily station NO2.
 
     * Row level: a day identical (+-0.05 ug/m^3) to the previous valid day is a frozen reading.
-    * Station level: drop stations whose coefficient of variation is below ``min_cv`` (a flat line
-      over weeks is not physically plausible for urban NO2) or with fewer than ``min_days`` days left.
-    * Stations whose mean is below ``low_fraction`` x the network median are only *flagged*: low values
-      can be genuine (e.g. a station inside a national park).
+    * Station level, dropped when:
+      - fewer than ``min_days`` valid days remain, or the coefficient of variation is below ``min_cv``
+        (a flat line over weeks is not physically plausible for urban NO2);
+      - the station median is below ``low_fraction`` x the network median of station medians
+        (failing chemiluminescence analysers drift towards zero);
+      - a station within ``neighbour_km`` reads ``neighbour_ratio`` times higher - urban NO2 cannot differ
+        several-fold over ~1 km, so the lower (drifting) instrument is removed.
     """
     df = df.sort_values(["station_id", "date"]).copy()
     frozen = df.groupby("station_id")["no2"].diff().abs() < 0.05
     cleaned = df[~frozen]
-    stats = cleaned.groupby("station_id")["no2"].agg(["count", "mean", "std"])
+    stats = cleaned.groupby("station_id").agg(count=("no2", "count"), mean=("no2", "mean"), std=("no2", "std"),
+                                               median=("no2", "median"), lat=("lat", "first"), lon=("lon", "first"))
     stats["cv"] = stats["std"] / stats["mean"]
-    network_median = float(stats["mean"].median())
-    dropped = {}
+    dropped: dict[str, str] = {}
     for sid, row in stats.iterrows():
         if row["count"] < min_days:
             dropped[sid] = f"only {int(row['count'])} valid days"
         elif row["cv"] < min_cv:
             dropped[sid] = f"flat-lined (CV={row['cv']:.2f})"
-    flagged = {sid: f"mean {row['mean']:.1f} vs network median {network_median:.1f}"
-               for sid, row in stats.iterrows()
-               if sid not in dropped and row["mean"] < low_fraction * network_median}
+
+    alive = stats.drop(index=list(dropped))
+    network_median = float(alive["median"].median()) if len(alive) else float("nan")
+    for sid, row in alive.iterrows():
+        if row["median"] < low_fraction * network_median:
+            dropped[sid] = f"implausibly low (median {row['median']:.1f} vs network {network_median:.1f})"
+
+    alive = stats.drop(index=list(dropped))
+    ids = list(alive.index)
+    for i, a in enumerate(ids):
+        for b in ids[i + 1:]:
+            ra, rb = alive.loc[a], alive.loc[b]
+            km = float(np.hypot((ra.lat - rb.lat) * 110.57, (ra.lon - rb.lon) * 111.32 * np.cos(np.radians(ra.lat))))
+            if km > neighbour_km:
+                continue
+            lo, hi = (a, b) if ra["median"] < rb["median"] else (b, a)
+            if alive.loc[hi, "median"] > neighbour_ratio * alive.loc[lo, "median"] and lo not in dropped:
+                dropped[lo] = (f"inconsistent with {hi} {km:.1f} km away "
+                               f"(median {alive.loc[lo, 'median']:.1f} vs {alive.loc[hi, 'median']:.1f})")
+
     out = cleaned[~cleaned["station_id"].isin(dropped)]
     report = {
         "rows_in": int(len(df)), "frozen_rows_removed": int(frozen.sum()), "rows_out": int(len(out)),
         "stations_in": int(df["station_id"].nunique()), "stations_out": int(out["station_id"].nunique()),
-        "dropped_stations": dropped, "flagged_low_stations": flagged,
+        "network_median_ugm3": network_median, "dropped_stations": dropped,
     }
     return out, report
 

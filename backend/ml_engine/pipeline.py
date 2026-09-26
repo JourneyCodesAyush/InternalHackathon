@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -14,13 +16,17 @@ import xarray as xr
 from . import export
 from .config import PipelineConfig
 from .dispersion import AdvectionDiffusionSolver, transport_summary
-from .downscaling import CALIBRATOR_FILE, NO2Downscaler, SurfaceCalibrator, column_to_surface
+from .downscaling import NO2Downscaler
 from .gapfill import SpatioTemporalGapFiller
 from .grid import GridSpec, upsample_bilinear
 from .ingestion import load_stations_csv, quality_control, road_density_from_geojson
-from .validation import StationValidator, regression_metrics, sample_at_stations, split_stations
+from .surface import SurfaceFeatureBuilder, select_surface_model
+from .validation import acceptance, regression_metrics, sample_at_stations
 
 log = logging.getLogger(__name__)
+
+SURFACE_MODEL_FILE = "surface_model.joblib"
+GEE_CACHE_VERSION = 2  # bump when the set of ingested layers changes
 
 
 @dataclass
@@ -50,10 +56,9 @@ class NO2Pipeline:
         stations = None
         if stations_csv:
             stations, self.station_qc = quality_control(load_stations_csv(stations_csv))
-            log.info("Station QC: %d/%d stations kept, %d frozen readings removed, dropped=%s, flagged low=%s",
+            log.info("Station QC: %d/%d stations kept, %d frozen readings removed, dropped=%s",
                      self.station_qc["stations_out"], self.station_qc["stations_in"],
-                     self.station_qc["frozen_rows_removed"], list(self.station_qc["dropped_stations"]),
-                     list(self.station_qc["flagged_low_stations"]))
+                     self.station_qc["frozen_rows_removed"], list(self.station_qc["dropped_stations"]))
         with self._timer("ingest"):
             if source == "synthetic":
                 from .ingestion import synthetic
@@ -61,16 +66,37 @@ class NO2Pipeline:
                 coarse, static, syn_stations, truth = synthetic.generate(self.cfg, self.coarse_grid, self.fine_grid, seed)
                 stations = stations if stations is not None else syn_stations
             elif source == "gee":
-                from .ingestion import gee
+                coarse, static = self._load_gee_cached(ee_project)
+                if not roads_geojson and self.cfg.fetch_osm_roads:
+                    from .ingestion.osm import fetch_major_roads
 
-                gee.initialize(project=ee_project)
-                coarse, static = gee.load_gee(self.cfg, self.coarse_grid, self.fine_grid)
+                    roads_geojson = fetch_major_roads(self.fine_grid.bbox, self.cfg.cache_dir)
             else:
                 raise ValueError(f"unknown source {source!r}")
             if roads_geojson:
                 static["road_density"] = (("y", "x"), road_density_from_geojson(roads_geojson, self.fine_grid))
         log.info("Ingested %d days on coarse grid %s and fine grid %s", coarse.sizes["time"], self.coarse_grid.shape, self.fine_grid.shape)
         return coarse, static, stations, truth
+
+    def _load_gee_cached(self, ee_project: str | None) -> tuple[xr.Dataset, xr.Dataset]:
+        """Earth Engine download, cached on disk per (AOI, period, grid, screening) so reruns are instant."""
+        from .ingestion import gee
+
+        cfg = self.cfg
+        key = hashlib.sha1(json.dumps([GEE_CACHE_VERSION, cfg.bbox, cfg.start_date, cfg.end_date, cfg.coarse_res_deg, cfg.refine_factor,
+                                       cfg.qa_threshold, cfg.max_cloud_fraction, cfg.min_valid_subpixel_fraction]
+                                      ).encode()).hexdigest()[:12]
+        cache_dir = Path(cfg.cache_dir)
+        coarse_path, static_path = cache_dir / f"gee_{key}_coarse.nc", cache_dir / f"gee_{key}_static.nc"
+        if coarse_path.exists() and static_path.exists():
+            log.info("Using cached Earth Engine data %s", coarse_path)
+            return xr.load_dataset(coarse_path, engine="h5netcdf"), xr.load_dataset(static_path, engine="h5netcdf")
+        gee.initialize(project=ee_project)
+        coarse, static = gee.load_gee(cfg, self.coarse_grid, self.fine_grid)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        coarse.to_netcdf(coarse_path, engine="h5netcdf")
+        static.to_netcdf(static_path, engine="h5netcdf")
+        return coarse, static
 
     # ---------------------------------------------------------------- full run
     def run(self, source: str = "synthetic", stations_csv: str | None = None, roads_geojson: str | None = None,
@@ -103,35 +129,25 @@ class NO2Pipeline:
         downscaler = NO2Downscaler.load(cfg.model_dir, static)  # round-trip proves the artefact is loadable
         with self._timer("downscale_inference"):
             column_fine = downscaler.predict(coarse, gf.filled, self.fine_grid.x, self.fine_grid.y)
-        pbl_conc = downscaler.to_surface(column_fine, coarse, calibrator=None)
+        pbl_conc = downscaler.to_surface(column_fine, coarse)
 
-        # Stage 4 (calibration on training stations, validation on unseen ones) ----------------
-        calibrator = None
+        # Stage 4 - station-trained surface model, scored on unseen stations (leave-stations-out CV)
         surface = pbl_conc
         if stations is not None and len(stations):
-            train_st, test_st = split_stations(stations, cfg.validation.test_station_fraction, cfg.validation.random_state)
-            report["stations"] = {"train_ids": sorted(train_st.station_id.unique().tolist()),
-                                  "test_ids": sorted(test_st.station_id.unique().tolist())}
-            train_pairs = sample_at_stations(pbl_conc, train_st, self.fine_grid)
-            try:
-                calibrator = SurfaceCalibrator().fit(train_pairs["predicted"].values, train_pairs["no2"].values)
-                calibrator.save(Path(cfg.model_dir) / CALIBRATOR_FILE)
-                report["surface_calibration"] = calibrator.info
-                surface = downscaler.to_surface(column_fine, coarse, calibrator)
-            except ValueError as exc:
-                log.warning("Skipping station calibration: %s", exc)
-            validator = StationValidator(self.fine_grid, cfg.validation.min_r2, cfg.validation.max_rmse_ugm3)
-            with self._timer("validation"):
-                val = validator.validate(surface, test_st)
-                baseline = self._coarse_baseline(coarse, gf.filled, calibrator, test_st)
-            matched = val.pop("matched")
-            report["validation_unseen_stations"] = val
-            report["validation_baseline_coarse_no_downscaling"] = baseline
+            with self._timer("surface_model"):
+                builder = SurfaceFeatureBuilder(static, coarse, gf.filled, column_fine, cfg.refine_factor)
+                table = builder.station_table(stations, self.fine_grid)
+                surface_model, selection, oof = select_surface_model(table, builder.names, cfg.validation.cv_folds)
+                surface_model.save(Path(cfg.model_dir) / SURFACE_MODEL_FILE)
+                surface = builder.predict_map(surface_model)
+            best = selection["candidates"][selection["selected"]]
+            best["acceptance"] = acceptance(best["overall"], cfg.validation.min_r2, cfg.validation.max_rmse_ugm3)
+            report["surface_model"] = selection
             if truth is not None:  # best achievable score given the synthetic station noise
-                ceiling = sample_at_stations(truth["surface"], test_st, self.fine_grid)
+                ceiling = sample_at_stations(truth["surface"], stations, self.fine_grid)
                 report["validation_noise_ceiling_synthetic"] = regression_metrics(ceiling["no2"], ceiling["predicted"])
             if export_outputs:
-                matched.to_csv(out_dir / "validation_station_pairs.csv", index=False)
+                oof.to_csv(out_dir / "validation_unseen_station_predictions.csv", index=False)
         else:
             log.warning("No station data - surface NO2 is uncalibrated and station validation is skipped")
 
@@ -194,18 +210,6 @@ class NO2Pipeline:
         return {k: str(p) for k, p in paths.items()}
 
     # ---------------------------------------------------------------- helpers
-    def _coarse_baseline(self, coarse, filled, calibrator, stations) -> dict:
-        """Same conversion + calibration but without downscaling: what 250 m buys over the raw pixel."""
-        f = self.cfg.refine_factor
-        col = upsample_bilinear(filled.values.astype(np.float64), f)
-        conc = column_to_surface(col, upsample_bilinear(coarse["blh"].values.astype(np.float64), f))
-        if calibrator is not None:
-            conc = calibrator.transform(conc)
-        da = xr.DataArray(conc, coords={"time": coarse.time.values, "y": self.fine_grid.y, "x": self.fine_grid.x},
-                          dims=("time", "y", "x"))
-        m = sample_at_stations(da, stations, self.fine_grid)
-        return regression_metrics(m["no2"], m["predicted"])
-
     class _T:
         def __init__(self, sink, key):
             self.sink, self.key = sink, key

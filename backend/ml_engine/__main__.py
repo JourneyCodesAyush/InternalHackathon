@@ -26,6 +26,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--end", default=None, help="YYYY-MM-DD inclusive (default: config)")
     p.add_argument("--stations", default=None, help="CSV with station_id,lat,lon,date,no2 (ug/m3)")
     p.add_argument("--roads", default=None, help="GeoJSON of road lines (e.g. OSM export) for road density")
+    p.add_argument("--no-osm", action="store_true", help="do not download OpenStreetMap roads (gee source)")
     p.add_argument("--ee-project", default=None, help="Google Cloud project registered for Earth Engine")
     p.add_argument("--qa", type=float, default=0.75, help="qa_value threshold when the collection has one")
     p.add_argument("--horizons", nargs="+", type=float, default=[1, 3, 6], help="forecast horizons in hours")
@@ -47,6 +48,7 @@ def main(argv=None) -> int:
     if args.end:
         cfg.end_date = args.end
     cfg.dispersion.horizons_h = tuple(args.horizons)
+    cfg.fetch_osm_roads = not args.no_osm
     cfg.output_dir = Path(args.out) if args.out else Path("outputs") / f"{args.source}_{datetime.now():%Y%m%d_%H%M%S}"
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -81,14 +83,21 @@ def print_summary(r: dict, out_dir: Path) -> None:
     disp = r["dispersion"]
     print(f" Stage 3  dispersion: wind {disp['mean_speed_ms']:.1f} m/s heading {disp['plume_heading_deg']:.0f} deg; "
           f"domain mean by horizon {', '.join(f'+{k}h={v:.1f}' for k, v in disp['horizon_domain_mean_ugm3'].items())} ug/m3")
-    if "validation_unseen_stations" in r:
-        v = r["validation_unseen_stations"]
-        print(f" Stage 4  unseen stations ({v['n_stations']}): {_fmt(v['overall'])}  [ug/m3]")
-        print(f"          coarse baseline     : {_fmt(r['validation_baseline_coarse_no_downscaling'])}")
+    if "surface_model" in r:
+        sm = r["surface_model"]
+        print(f" Stage 4  surface model, {sm['cv']} (every score on stations unseen in training):")
+        for name, c in sm["candidates"].items():
+            mark = "*" if name == sm["selected"] else " "
+            print(f"        {mark} {name:30s} {_fmt(c['overall'])}")
+            print(f"          {'':30s} spatial R2={c['station_mean_spatial']['r2']:.2f}  temporal R2={c['temporal_anomaly']['r2']:.2f}"
+                  f"  median within-station r={c['median_within_station_r']:.2f}")
+        best = sm["candidates"][sm["selected"]]
+        acc = best["acceptance"]
+        print(f"          acceptance (R2>={acc['min_r2']}, RMSE<={acc['max_rmse_ugm3']}): {'PASS' if acc['passed'] else 'FAIL'}")
+        top = ", ".join(f"{k}={v:.2f}" for k, v in list(sm["feature_importance"].items())[:6])
+        print(f"          top features: {top}")
         if "validation_noise_ceiling_synthetic" in r:
-            print(f"          truth ceiling       : {_fmt(r['validation_noise_ceiling_synthetic'])}")
-        print(f"          acceptance (R2>={v['acceptance']['min_r2']}, RMSE<={v['acceptance']['max_rmse_ugm3']}): "
-              f"{'PASS' if v['acceptance']['passed'] else 'FAIL'}")
+            print(f"          truth ceiling (synthetic): {_fmt(r['validation_noise_ceiling_synthetic'])}")
     print(f" Stage 5  outputs  : {out_dir.resolve()}")
     print(f" Timings (s)       : {r['timings_s']}")
     print("=" * 78)

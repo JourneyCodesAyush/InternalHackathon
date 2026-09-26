@@ -9,7 +9,7 @@ Method (scale-invariant regression + mass-conserving residual correction):
 3. Iterative back-projection: the fine field is corrected so its block means reproduce the observed
    coarse column exactly, keeping the product faithful to the satellite measurement.
 4. The downscaled column is converted to ground-level concentration (ug/m^3) by distributing it through
-   the boundary layer, and optionally calibrated against training ground stations.
+   the boundary layer; the station-trained surface model (surface.py) then maps it to ground level.
 """
 
 from __future__ import annotations
@@ -19,12 +19,10 @@ import logging
 from dataclasses import asdict
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 import xarray as xr
 import xgboost as xgb
-from sklearn.linear_model import HuberRegressor
 
 from .config import NO2_MOLAR_MASS_G, DownscaleConfig
 from .grid import block_mean, nan_neighbourhood_mean, upsample_bilinear
@@ -33,18 +31,17 @@ log = logging.getLogger(__name__)
 
 MET_FEATURES = ("u10", "v10", "wind_speed", "blh", "sp", "t2m")
 CONTEXT_FEATURES = ("no2_ring", "no2_day_mean", "doy_sin", "doy_cos")
-STATIC_CANDIDATES = ("elevation", "slope", "ndvi", "built_up", "road_density")
+STATIC_CANDIDATES = ("elevation", "slope", "ndvi", "built_up", "road_density", "night_lights", "ghsl_built", "population")
 
 MODEL_FILE = "xgb_downscaler.json"
 META_FILE = "metadata.json"
-CALIBRATOR_FILE = "surface_calibrator.joblib"
 
 
 def column_to_surface(column_umol_m2: np.ndarray, blh_m: np.ndarray) -> np.ndarray:
     """Tropospheric column (umol/m^2) -> boundary-layer mean concentration (ug/m^3).
 
     Assumes the tropospheric NO2 burden is well mixed within the planetary boundary layer:
-    C = column[mol/m^2] * M[g/mol] * 1e6[ug/g] / BLH[m]. The station calibrator then absorbs the
+    C = column[mol/m^2] * M[g/mol] * 1e6[ug/g] / BLH[m]. The station-trained surface model then absorbs the
     near-surface profile shape factor and regional background.
     """
     return column_umol_m2 * 1e-6 * NO2_MOLAR_MASS_G * 1e6 / np.clip(blh_m, 50.0, None)
@@ -180,17 +177,14 @@ class NO2Downscaler:
             name="no2_column_fine", attrs={"units": "umol m-2", "long_name": "Downscaled tropospheric NO2 column"},
         )
 
-    def to_surface(self, column_fine: xr.DataArray, coarse: xr.Dataset, calibrator: "SurfaceCalibrator | None" = None) -> xr.DataArray:
-        """Convert the downscaled column to ground-level ug/m^3 using BLH (and station calibration if given)."""
+    def to_surface(self, column_fine: xr.DataArray, coarse: xr.Dataset) -> xr.DataArray:
+        """Boundary-layer-mixed concentration (ug/m^3) - the uncalibrated surface estimate used without stations."""
         f = self.features.factor if self.features else self.metadata["refine_factor"]
         blh_fine = upsample_bilinear(coarse["blh"].values.astype(np.float64), f)
         conc = column_to_surface(column_fine.values.astype(np.float64), blh_fine)
-        if calibrator is not None and calibrator.is_fitted:
-            conc = calibrator.transform(conc)
         return xr.DataArray(
             np.clip(conc, 0, None).astype(np.float32), coords=column_fine.coords, dims=column_fine.dims,
-            name="no2_surface", attrs={"units": "ug m-3", "long_name": "Ground-level NO2 concentration",
-                                       "calibrated": int(calibrator is not None and calibrator.is_fitted)},
+            name="no2_surface", attrs={"units": "ug m-3", "long_name": "Boundary-layer-mixed NO2 (uncalibrated)"},
         )
 
     # ---------------------------------------------------------------------------------------------
@@ -221,40 +215,3 @@ class NO2Downscaler:
     def _require_fitted(self):
         if self.model is None or self.features is None:
             raise RuntimeError("Downscaler is not trained - call fit() or load() first")
-
-
-class SurfaceCalibrator:
-    """Robust linear map from BLH-mixed concentration to station-measured surface NO2 (ug/m^3).
-
-    Fitted on *training* stations only; the held-out stations remain unseen for validation.
-    """
-
-    def __init__(self):
-        self.model: HuberRegressor | None = None
-        self.info: dict = {}
-
-    @property
-    def is_fitted(self) -> bool:
-        return self.model is not None
-
-    def fit(self, pbl_conc: np.ndarray, station_no2: np.ndarray) -> "SurfaceCalibrator":
-        x, y = np.asarray(pbl_conc, float), np.asarray(station_no2, float)
-        ok = np.isfinite(x) & np.isfinite(y)
-        if ok.sum() < 10:
-            raise ValueError(f"Need >=10 station-day pairs to calibrate, got {int(ok.sum())}")
-        self.model = HuberRegressor(epsilon=1.5, max_iter=500).fit(x[ok, None], y[ok])
-        self.info = {"slope": float(self.model.coef_[0]), "intercept": float(self.model.intercept_), "n_pairs": int(ok.sum())}
-        return self
-
-    def transform(self, pbl_conc: np.ndarray) -> np.ndarray:
-        return self.model.coef_[0] * pbl_conc + self.model.intercept_
-
-    def save(self, path: str | Path) -> None:
-        joblib.dump({"model": self.model, "info": self.info}, path)
-
-    @classmethod
-    def load(cls, path: str | Path) -> "SurfaceCalibrator":
-        obj = cls()
-        payload = joblib.load(path)
-        obj.model, obj.info = payload["model"], payload["info"]
-        return obj

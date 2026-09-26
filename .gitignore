@@ -221,3 +221,4 @@ pyrightconfig.json
 # ML engine run artefacts
 backend/outputs/
 backend/models/
+backend/cache/
