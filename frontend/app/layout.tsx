@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "leaflet/dist/leaflet.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,8 +14,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <body className="h-full bg-[#0d0f15] text-[#f1f3f7] flex flex-col overflow-hidden selection:bg-[#3b82f6]/30 selection:text-white font-sans">
+    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
+      <body
+        suppressHydrationWarning
+        className="h-full bg-[#0d0f15] text-[#f1f3f7] flex flex-col overflow-hidden selection:bg-[#3b82f6]/30 selection:text-white font-sans"
+      >
         {children}
       </body>
     </html>

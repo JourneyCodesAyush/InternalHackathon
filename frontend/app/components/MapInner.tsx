@@ -12,7 +12,6 @@ import {
   useMapEvents,
 } from 'react-leaflet';
 import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
 import { KNOWN_POIS, SAMPLE_WIND_VECTORS, getHazardCategory } from '@/lib/constants';
 
 interface MapInnerProps {
@@ -187,6 +186,7 @@ export default function MapInner({
         zoomControl={false}
         attributionControl={false}
         className="w-full h-full"
+        style={{ height: '100%', width: '100%' }}
       >
         {/* Crisp Dark Basemap Tiles (CartoDB Dark Matter with OSM Fallback) */}
         <TileLayer
