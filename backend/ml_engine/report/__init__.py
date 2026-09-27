@@ -21,8 +21,8 @@ from ..env import offline, setting
 from .analysis import analyse_run
 from .llm import generate_narrative
 from .pdf import build_pdf, build_unavailable_pdf, resolve_fonts
-from .texts import (BAND, LANGUAGES, SOURCE, STATUS, forecast_texts, notice_text, recommendations, summary_text,
-                    trend_texts)
+from .texts import (ANOMALY, BAND, LANGUAGES, SOURCE, STATUS, forecast_texts, notice_text, recommendations, summary_text,
+                    trend_texts, anomaly_lines)
 
 log = logging.getLogger(__name__)
 
@@ -222,12 +222,15 @@ def public_facts(facts: dict, language: str = "en") -> dict:
         "status": STATUS[language][facts["current"]["status"]],
         "band": BAND[language][facts["current"]["band"]],
         "hotspot_sources": [[SOURCE[language][s] for s in h["sources"]] for h in facts["hotspots"]],
+        "anomaly_kinds": [[_plain(ANOMALY[language][k]) for k in a["kinds"]] for a in facts.get("anomalies") or []],
+        "anomaly_title": _plain(ANOMALY[language]["h"]),
     }
     out["texts"] = {
         "summary": _plain(summary_text(facts, language)),
         "forecast": [_plain(t) for t in forecast_texts(facts, language)],
         "trend": [_plain(t) for t in trend_texts(facts, language)],
         "recommendations": [_plain(t) for t in recommendations(facts, language)],
+        "anomalies": [_plain(t) for t in anomaly_lines(facts, language)],
         "notice": notice_text(facts["notice"], language) if facts.get("notice") else None,
     }
     return out

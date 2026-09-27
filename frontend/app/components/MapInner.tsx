@@ -2,9 +2,22 @@
 
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { KNOWN_POIS, SAMPLE_WIND_VECTORS, getHazardCategory } from '@/lib/constants';
+import type { POISource } from '@/lib/types';
+
 import { loadGoogleMaps, DARK_MAP_STYLES } from '@/lib/googleMaps';
 import { useHomeGeoTiffLoader } from './useHomeGeoTiffLoader';
 import { createNO2HeatmapOverlay, INO2HeatmapOverlay } from './NO2HeatmapOverlay';
+
+const POI_API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+/** A traffic or rail corridor from GET /api/v1/analyze/pois. */
+interface Corridor {
+  id: string;
+  name: string;
+  kind: string;
+  emissionFactor: number;
+  path: [number, number][];
+}
 
 interface MapInnerProps {
   center: [number, number];
@@ -426,65 +439,126 @@ export default function MapInner({
     const google = (window as any).google;
     if (!map || !google?.maps) return;
 
-    poiMarkersRef.current.forEach((marker) => marker.setMap(null));
-    poiMarkersRef.current = [];
-
-    if (activeLayers.pois) {
-      KNOWN_POIS.forEach((poi) => {
-        const markerColor =
-          poi.category === 'POWER_PLANT'
-            ? '#f43f5e'
-            : poi.category === 'TRAFFIC_CORRIDOR'
-            ? '#38bdf8'
-            : poi.category === 'FACTORY'
-            ? '#fbbf24'
-            : '#c084fc';
-
-        const marker = new google.maps.Marker({
-          position: { lat: poi.coordinates[0], lng: poi.coordinates[1] },
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE,
-            scale: 5.5,
-            fillColor: markerColor,
-            fillOpacity: 0.9,
-            strokeColor: '#090d16',
-            strokeWeight: 1.5,
-          },
-          map: map,
-          title: poi.name,
-        });
-
-        marker.addListener('click', () => {
-          if (infoWindowRef.current) {
-            const content = `
-              <div style="font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 11px; max-width: 250px; padding: 6px 8px; background: #0c0f17; color: #e2e8f0; border: 1px solid #1e2638; border-radius: 6px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; border-bottom: 1px solid #1e2638; padding-bottom: 4px;">
-                  <span style="font-weight: 600; color: #f8fafc;">${poi.name}</span>
-                  <span style="font-size: 9px; font-family: ui-monospace, monospace; text-transform: uppercase; color: #94a3b8; background: #1e2638; padding: 1px 4px; border-radius: 2px;">
-                    ${poi.category.replace('_', ' ')}
-                  </span>
-                </div>
-                <p style="font-size: 10px; color: #cbd5e1; line-height: 1.4; margin-bottom: 6px;">
-                  ${poi.details}
-                </p>
-                <div style="display: flex; align-items: center; justify-content: space-between; font-size: 9px; font-family: ui-monospace, monospace; color: #94a3b8; padding-top: 4px; border-top: 1px solid #1e2638;">
-                  <span>Emission Factor: ${(poi.emissionFactor * 100).toFixed(0)}%</span>
-                  <span style="color: #60a5fa;">PostGIS Spatial Point</span>
-                </div>
-              </div>
-            `;
-            infoWindowRef.current.setContent(content);
-            infoWindowRef.current.open(map, marker);
-          }
-        });
-
-        poiMarkersRef.current.push(marker);
-      });
-    }
-
-    return () => {
+    const clear = () => {
       poiMarkersRef.current.forEach((marker) => marker.setMap(null));
       poiMarkersRef.current = [];
+    };
+    clear();
+    if (!activeLayers.pois) return;
+
+    const addMarker = (poi: POISource) => {
+      const markerColor =
+        poi.category === 'POWER_PLANT'
+          ? '#f43f5e'
+          : poi.category === 'TRAFFIC_CORRIDOR'
+          ? '#38bdf8'
+          : poi.category === 'FACTORY'
+          ? '#fbbf24'
+          : '#c084fc';
+
+      const marker = new google.maps.Marker({
+        position: { lat: poi.coordinates[0], lng: poi.coordinates[1] },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 5.5,
+          fillColor: markerColor,
+          fillOpacity: 0.9,
+          strokeColor: '#090d16',
+          strokeWeight: 1.5,
+        },
+        map: map,
+        title: poi.name,
+      });
+
+      marker.addListener('click', () => {
+        if (infoWindowRef.current) {
+          const content = `
+            <div style="font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 11px; max-width: 250px; padding: 6px 8px; background: #0c0f17; color: #e2e8f0; border: 1px solid #1e2638; border-radius: 6px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; border-bottom: 1px solid #1e2638; padding-bottom: 4px;">
+                <span style="font-weight: 600; color: #f8fafc;">${poi.name}</span>
+                <span style="font-size: 9px; font-family: ui-monospace, monospace; text-transform: uppercase; color: #94a3b8; background: #1e2638; padding: 1px 4px; border-radius: 2px;">
+                  ${poi.category.replace('_', ' ')}
+                </span>
+              </div>
+              <p style="font-size: 10px; color: #cbd5e1; line-height: 1.4; margin-bottom: 6px;">
+                ${poi.details}
+              </p>
+              <div style="display: flex; align-items: center; justify-content: space-between; font-size: 9px; font-family: ui-monospace, monospace; color: #94a3b8; padding-top: 4px; border-top: 1px solid #1e2638;">
+                <span>Emission Factor: ${(poi.emissionFactor * 100).toFixed(0)}%</span>
+                <span style="color: #60a5fa;">PostGIS Spatial Point</span>
+              </div>
+            </div>
+          `;
+          infoWindowRef.current.setContent(content);
+          infoWindowRef.current.open(map, marker);
+        }
+      });
+
+      poiMarkersRef.current.push(marker);
+    };
+    const addCorridor = (c: Corridor) => {
+      const line = new google.maps.Polyline({
+        path: c.path.map(([lat, lng]) => ({ lat, lng })),
+        strokeColor: c.kind === 'railway' ? '#94a3b8' : '#38bdf8',
+        strokeOpacity: 0.75,
+        strokeWeight: c.kind === 'motorway' ? 3 : 2,
+        map,
+      });
+      line.addListener('click', (e: { latLng: unknown }) => {
+        if (!infoWindowRef.current) return;
+        infoWindowRef.current.setContent(
+          `<div style="font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; padding: 6px 8px; background: #0c0f17; color: #e2e8f0; border: 1px solid #1e2638; border-radius: 6px;"><b>${c.name}</b><br/><span style="color:#94a3b8">${c.kind === 'railway' ? 'Railway corridor' : `Traffic corridor (${c.kind})`} · OpenStreetMap</span></div>`
+        );
+        infoWindowRef.current.setPosition(e.latLng);
+        infoWindowRef.current.open(map);
+      });
+      poiMarkersRef.current.push(line);
+    };
+    const draw = (points: POISource[], corridors: Corridor[]) => {
+      clear();
+      corridors.forEach(addCorridor);
+      points.forEach(addMarker);
+      KNOWN_POIS.forEach(addMarker); // curated sources stay on top
+    };
+
+    // All mapped industries, power plants and corridors in the visible area (OpenStreetMap, cached by the backend)
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      const bounds = map.getBounds();
+      if (!bounds) return;
+      const sw = bounds.getSouthWest();
+      const ne = bounds.getNorthEast();
+      const bbox = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
+      if (bbox[2] - bbox[0] > 1 || bbox[3] - bbox[1] > 1) {
+        draw([], []); // zoomed too far out for every source: curated ones only
+        return;
+      }
+      if (!poiMarkersRef.current.length) draw([], []); // curated sources right away while the full set loads
+      try {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+        const res = await fetch(`${POI_API}/api/v1/analyze/pois?bbox=${bbox.map((v) => v.toFixed(4)).join(',')}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) draw(data.points ?? [], data.corridors ?? []);
+      } catch (err) {
+        console.warn('Point sources unavailable; showing the curated list:', err);
+        if (!cancelled) draw([], []);
+      }
+    };
+    const idle = map.addListener('idle', () => {
+      clearTimeout(timer);
+      timer = setTimeout(load, 600);
+    });
+    load();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      idle.remove();
+      clear();
     };
   }, [activeLayers.pois, mapInstance]);
 
