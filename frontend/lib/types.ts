@@ -96,5 +96,6 @@ export interface UploadedSatelliteFile {
     peakNO2: number; // µg/m³
     processingDurationSec: number;
   };
+  _file?: File;
   error?: string;
 }

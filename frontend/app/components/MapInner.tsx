@@ -341,11 +341,11 @@ export default function MapInner({
       coarseGrid.forEach((c) => {
         const rect = new google.maps.Rectangle({
           bounds: c.bounds,
-          strokeColor: '#a855f7',
-          strokeOpacity: 0.9,
-          strokeWeight: 1.5,
-          fillColor: '#9333ea',
-          fillOpacity: 0.12,
+          strokeColor: '#818cf8',
+          strokeOpacity: 0.45,
+          strokeWeight: 0.75,
+          fillColor: '#6366f1',
+          fillOpacity: 0.04,
           map: map,
           clickable: true,
         });
@@ -353,15 +353,21 @@ export default function MapInner({
         rect.addListener('click', (e: any) => {
           if (infoWindowRef.current) {
             const content = `
-              <div style="font-family: inherit; font-size: 12px; padding: 4px 6px;">
-                <div style="font-weight: 700; color: #c084fc; text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px;">
-                  Raw TROPOMI Satellite Pixel
+              <div style="font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 11px; padding: 6px 8px; background: #0c0f17; color: #e2e8f0; border: 1px solid #1e2638; border-radius: 6px; min-width: 210px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e2638; padding-bottom: 4px; margin-bottom: 6px;">
+                  <span style="font-size: 9px; font-weight: 700; color: #818cf8; text-transform: uppercase; letter-spacing: 0.08em; font-family: ui-monospace, monospace;">
+                    S5P TROPOMI L2 SWATH
+                  </span>
+                  <span style="font-size: 9px; color: #94a3b8; font-family: ui-monospace, monospace;">
+                    RAW 7km
+                  </span>
                 </div>
-                <div style="font-family: monospace; color: #e2e8f0; margin-top: 5px;">
-                  Spatial Footprint: ~7.0km × 3.5km
+                <div style="font-family: ui-monospace, monospace; font-size: 13px; font-weight: 600; color: #f8fafc; margin-bottom: 3px;">
+                  ${c.coarseNO2} <span style="font-size: 10px; color: #94a3b8; font-weight: normal;">µg/m³</span>
                 </div>
-                <div style="font-family: monospace; color: #cbd5e1; margin-top: 2px;">
-                  Coarse Column NO₂: <strong>${c.coarseNO2} µg/m³</strong>
+                <div style="font-size: 10px; color: #94a3b8; font-family: ui-monospace, monospace; line-height: 1.4;">
+                  Detector Footprint: ~7.0 × 3.5 km<br />
+                  Center: ${c.center[0].toFixed(3)}°N, ${c.center[1].toFixed(3)}°E
                 </div>
               </div>
             `;
@@ -397,11 +403,11 @@ export default function MapInner({
 
         const rect = new google.maps.Rectangle({
           bounds: cell.bounds,
-          strokeColor: isImputedVisible ? '#f59e0b' : hazard.color,
-          strokeOpacity: isImputedVisible ? 1.0 : 0.7,
-          strokeWeight: isImputedVisible ? 2.0 : 0.8,
+          strokeColor: isImputedVisible ? '#f59e0b' : '#475569',
+          strokeOpacity: isImputedVisible ? 0.85 : 0.25,
+          strokeWeight: isImputedVisible ? 1.0 : 0.5,
           fillColor: hazard.color,
-          fillOpacity: 0.38,
+          fillOpacity: 0.20,
           map: map,
           clickable: true,
         });
@@ -409,23 +415,29 @@ export default function MapInner({
         rect.addListener('click', (e: any) => {
           if (infoWindowRef.current) {
             const content = `
-              <div style="font-family: inherit; font-size: 12px; padding: 4px 6px; min-width: 190px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
-                  <span style="font-weight: 600; color: #f1f5f9;">Downscaled 1km Grid Cell</span>
-                  <span style="padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 10px; font-weight: 600; background-color: ${hazard.bgColor}; color: ${hazard.color};">
+              <div style="font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 11px; padding: 6px 8px; background: #0c0f17; color: #e2e8f0; border: 1px solid #1e2638; border-radius: 6px; min-width: 220px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e2638; padding-bottom: 4px; margin-bottom: 6px;">
+                  <span style="font-size: 9px; font-weight: 700; color: #60a5fa; text-transform: uppercase; letter-spacing: 0.08em; font-family: ui-monospace, monospace;">
+                    AI DOWNSCALED 1km
+                  </span>
+                  <span style="font-size: 9px; padding: 1px 5px; border-radius: 3px; font-family: ui-monospace, monospace; font-weight: 600; background-color: ${hazard.bgColor}; color: ${hazard.color}; border: 1px solid ${hazard.color}40;">
                     ${hazard.category}
                   </span>
                 </div>
-                <div style="font-family: monospace; font-size: 16px; font-weight: 700; color: #f8fafc; margin-bottom: 4px;">
-                  ${cell.no2} <span style="font-size: 11px; color: #94a3b8; font-weight: normal;">µg/m³</span>
+                <div style="display: flex; align-items: baseline; gap: 4px; margin-bottom: 4px;">
+                  <span style="font-family: ui-monospace, monospace; font-size: 16px; font-weight: 700; color: #f8fafc;">
+                    ${cell.no2}
+                  </span>
+                  <span style="font-size: 10px; color: #94a3b8;">µg/m³ NO₂</span>
                 </div>
-                <div style="font-size: 11px; color: #94a3b8; font-family: monospace;">
-                  Coordinates: ${cell.center[0].toFixed(3)}°N, ${cell.center[1].toFixed(3)}°E
+                <div style="font-size: 10px; color: #94a3b8; font-family: ui-monospace, monospace; line-height: 1.4;">
+                  Grid Coord: ${cell.center[0].toFixed(3)}°N, ${cell.center[1].toFixed(3)}°E
                 </div>
                 ${
                   cell.isCloudImputed
-                    ? `<div style="font-size: 10px; color: #fbbf24; font-family: monospace; margin-top: 6px; padding-top: 6px; border-top: 1px solid #334155;">
-                        ⚡ Imputed: Cloud Cover was ${cell.cloudCover}%
+                    ? `<div style="font-size: 9px; color: #f59e0b; font-family: ui-monospace, monospace; margin-top: 5px; padding-top: 4px; border-top: 1px dashed #334155; display: flex; align-items: center; justify-content: space-between;">
+                        <span>Autoencoder Infilled</span>
+                        <span>Cloud Cover: ${cell.cloudCover}%</span>
                       </div>`
                     : ''
                 }
@@ -461,31 +473,31 @@ export default function MapInner({
         const marker = new google.maps.Marker({
           position: { lat: w.lat, lng: w.lng },
           icon: {
-            path: 'M 0 -10 L 4 1 L 1.2 1 L 1.2 10 L -1.2 10 L -1.2 1 L -4 1 Z',
-            fillColor: '#2dd4bf',
-            fillOpacity: 0.9,
-            strokeColor: '#0f766e',
-            strokeWeight: 1.2,
-            scale: 1.4,
+            path: 'M 0 -11 L 2.5 0 L 0.8 0 L 0.8 9 L -0.8 9 L -0.8 0 L -2.5 0 Z',
+            fillColor: '#38bdf8',
+            fillOpacity: 0.85,
+            strokeColor: '#0284c7',
+            strokeWeight: 0.8,
+            scale: 1.1,
             rotation: w.angleDeg,
             anchor: new google.maps.Point(0, 0),
           },
           map: map,
-          title: `Wind: ${w.magnitude} m/s @ ${w.angleDeg}°`,
+          title: `ERA5 Vector: ${w.magnitude} m/s @ ${w.angleDeg}°`,
         });
 
         marker.addListener('click', () => {
           if (infoWindowRef.current) {
             const content = `
-              <div style="font-family: inherit; font-size: 12px; padding: 4px 6px;">
-                <div style="font-weight: 600; color: #2dd4bf; margin-bottom: 2px;">
-                  Atmospheric Wind Vector
+              <div style="font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 11px; padding: 6px 8px; background: #0c0f17; color: #e2e8f0; border: 1px solid #1e2638; border-radius: 6px;">
+                <div style="font-size: 9px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.08em; font-family: ui-monospace, monospace; margin-bottom: 4px;">
+                  ERA5 10m Wind Flow
                 </div>
-                <div style="color: #f1f5f9; font-family: monospace; font-size: 12px;">
+                <div style="color: #f1f5f9; font-family: ui-monospace, monospace; font-size: 12px; margin-bottom: 2px;">
                   Speed: <strong>${w.magnitude} m/s</strong>
                 </div>
-                <div style="color: #94a3b8; font-family: monospace; font-size: 11px; margin-top: 3px;">
-                  Direction: ${w.angleDeg}° (u: ${w.uComponent}, v: ${w.vComponent})
+                <div style="color: #94a3b8; font-family: ui-monospace, monospace; font-size: 10px;">
+                  Heading: ${w.angleDeg}° · u: ${w.uComponent}, v: ${w.vComponent}
                 </div>
               </div>
             `;
@@ -528,11 +540,11 @@ export default function MapInner({
           position: { lat: poi.coordinates[0], lng: poi.coordinates[1] },
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
-            scale: 8,
+            scale: 5.5,
             fillColor: markerColor,
-            fillOpacity: 0.85,
-            strokeColor: '#ffffff',
-            strokeWeight: 2,
+            fillOpacity: 0.9,
+            strokeColor: '#090d16',
+            strokeWeight: 1.5,
           },
           map: map,
           title: poi.name,
@@ -541,19 +553,19 @@ export default function MapInner({
         marker.addListener('click', () => {
           if (infoWindowRef.current) {
             const content = `
-              <div style="font-family: inherit; font-size: 12px; max-width: 250px; padding: 4px 6px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px;">
+              <div style="font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 11px; max-width: 250px; padding: 6px 8px; background: #0c0f17; color: #e2e8f0; border: 1px solid #1e2638; border-radius: 6px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; border-bottom: 1px solid #1e2638; padding-bottom: 4px;">
                   <span style="font-weight: 600; color: #f8fafc;">${poi.name}</span>
-                  <span style="font-size: 10px; font-family: monospace; text-transform: uppercase; color: #94a3b8;">
+                  <span style="font-size: 9px; font-family: ui-monospace, monospace; text-transform: uppercase; color: #94a3b8; background: #1e2638; padding: 1px 4px; border-radius: 2px;">
                     ${poi.category.replace('_', ' ')}
                   </span>
                 </div>
-                <p style="font-size: 11px; color: #cbd5e1; line-height: 1.4; margin-bottom: 6px;">
+                <p style="font-size: 10px; color: #cbd5e1; line-height: 1.4; margin-bottom: 6px;">
                   ${poi.details}
                 </p>
-                <div style="display: flex; align-items: center; justify-content: space-between; font-size: 10px; font-family: monospace; color: #94a3b8; padding-top: 6px; border-top: 1px solid #334155;">
+                <div style="display: flex; align-items: center; justify-content: space-between; font-size: 9px; font-family: ui-monospace, monospace; color: #94a3b8; padding-top: 4px; border-top: 1px solid #1e2638;">
                   <span>Emission Factor: ${(poi.emissionFactor * 100).toFixed(0)}%</span>
-                  <span style="color: #60a5fa;">PostGIS POI</span>
+                  <span style="color: #60a5fa;">PostGIS Spatial Point</span>
                 </div>
               </div>
             `;

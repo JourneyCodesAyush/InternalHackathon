@@ -7,9 +7,10 @@ import { UploadCloud, FolderUp, FileSpreadsheet, Image as ImageIcon } from 'luci
 interface FileUploaderProps {
   onFilesSelected: (files: File[]) => void;
   disabled?: boolean;
+  folderName?: string | null;
 }
 
-export default function FileUploader({ onFilesSelected, disabled = false }: FileUploaderProps) {
+export default function FileUploader({ onFilesSelected, disabled = false, folderName }: FileUploaderProps) {
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   const onDrop = useCallback(
@@ -63,29 +64,46 @@ export default function FileUploader({ onFilesSelected, disabled = false }: File
             ? 'border-blue-500 bg-blue-500/10'
             : isDragReject
             ? 'border-red-500 bg-red-500/10'
+            : folderName
+            ? 'border-blue-500/60 bg-blue-950/20'
             : 'border-[#2e3547] hover:border-zinc-500 bg-[#141721]'
         }`}
       >
         <input {...getInputProps()} />
 
         <div className="flex flex-col items-center justify-center gap-3">
-          <div className="w-12 h-12 rounded-full bg-[#1b202e] border border-[#2e3547] flex items-center justify-center text-blue-400">
+          <div className={`w-12 h-12 rounded-full border flex items-center justify-center ${
+            folderName ? 'bg-blue-600/20 border-blue-500/40 text-blue-400' : 'bg-[#1b202e] border-[#2e3547] text-blue-400'
+          }`}>
             <UploadCloud className="w-6 h-6" />
           </div>
 
           <div>
-            <div className="text-sm font-semibold text-zinc-100">
-              {isDragActive
-                ? 'Drop satellite data files here...'
-                : 'Drag and drop satellite imagery or raster files'}
+            <div className="text-sm font-semibold text-zinc-100 flex items-center justify-center gap-2">
+              {folderName ? (
+                <>
+                  <span className="text-blue-400 font-mono">📁 {folderName}</span>
+                  <span className="text-xs font-normal text-zinc-300">loaded</span>
+                </>
+              ) : isDragActive ? (
+                'Drop satellite data files here...'
+              ) : (
+                'Drag and drop satellite imagery or raster files'
+              )}
             </div>
-            <div className="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
-              Supported scientific & raster formats: <span className="font-mono text-zinc-300">GeoTIFF (.tif)</span>,{' '}
-              <span className="font-mono text-zinc-300">NetCDF (.nc)</span>,{' '}
-              <span className="font-mono text-zinc-300">HDF5 (.h5)</span>,{' '}
-              <span className="font-mono text-zinc-300">PNG</span>, or{' '}
-              <span className="font-mono text-zinc-300">JPEG</span>
-            </div>
+            {folderName ? (
+              <div className="text-xs text-emerald-400 mt-1 font-mono">
+                Folder active in pipeline — drag and drop or browse to add/replace files
+              </div>
+            ) : (
+              <div className="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
+                Supported scientific & raster formats: <span className="font-mono text-zinc-300">GeoTIFF (.tif)</span>,{' '}
+                <span className="font-mono text-zinc-300">NetCDF (.nc)</span>,{' '}
+                <span className="font-mono text-zinc-300">HDF5 (.h5)</span>,{' '}
+                <span className="font-mono text-zinc-300">PNG</span>, or{' '}
+                <span className="font-mono text-zinc-300">JPEG</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3 mt-2">

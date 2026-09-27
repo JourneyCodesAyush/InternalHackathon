@@ -1,5 +1,5 @@
 export const GOOGLE_MAPS_API_KEY =
-  process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || 'AIzaSyD3hWOj4LCvdZ2dsoy2UqdGzDVcFgX9WhI';
+  process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
 
 let googleMapsPromise: Promise<any> | null = null;
 

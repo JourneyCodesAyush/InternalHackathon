@@ -87,7 +87,7 @@ export default function HomePage() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#0d0f15]">
+    <div className="flex h-full w-full overflow-hidden bg-[#0d0f15]">
       {/* Fixed Left Navigation & Controls */}
       <Sidebar
         activeLayers={activeLayers}
