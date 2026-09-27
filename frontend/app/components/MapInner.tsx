@@ -115,6 +115,7 @@ export default function MapInner({
   const poiMarkersRef = useRef<any[]>([]);
   const selectedMarkerRef = useRef<any>(null);
   const selectedPulseCircleRef = useRef<any>(null);
+  const heatmapLayerRef = useRef<any>(null);
 
   // Keep callback fresh in ref
   const onMapClickRef = useRef(onMapClick);
@@ -133,10 +134,7 @@ export default function MapInner({
       ? 0.91
       : 0.85;
 
-  const fineGrid = useMemo(
-    () => generateSyntheticGrid(center[0], center[1], timeMultiplier),
-    [center, timeMultiplier]
-  );
+
 
   const coarseGrid = useMemo(
     () => generateCoarseGrid(center[0], center[1]),
@@ -387,77 +385,89 @@ export default function MapInner({
     };
   }, [activeLayers.rawCoarse, coarseGrid, mapInstance]);
 
-  // 5. Render LAYER 2: Fine Resolution AI/ML Downscaled Grid (1km)
+  // 5. Render LAYER 2: Heatmap Overlay using custom Canvas renderer
   useEffect(() => {
+    let active = true;
     const map = mapInstance;
     const google = (window as any).google;
     if (!map || !google?.maps) return;
 
-    downscaledOverlaysRef.current.forEach((rect) => rect.setMap(null));
-    downscaledOverlaysRef.current = [];
+    if (heatmapLayerRef.current) {
+      heatmapLayerRef.current.setMap(null);
+      heatmapLayerRef.current = null;
+    }
 
     if (activeLayers.downscaled) {
-      fineGrid.forEach((cell) => {
-        const hazard = getHazardCategory(cell.no2);
-        const isImputedVisible = activeLayers.cloudFilled && cell.isCloudImputed;
+      fetch('/heatmap_average.json')
+        .then(res => res.json())
+        .then(gridData => {
+          if (!active) return;
+          
+          const { width, height, bbox, min, max, data } = gridData;
+          const scale = 30;
+          const canvasWidth = width * scale;
+          const canvasHeight = height * scale;
+          
+          const canvas = document.createElement('canvas');
+          canvas.width = canvasWidth;
+          canvas.height = canvasHeight;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
 
-        const rect = new google.maps.Rectangle({
-          bounds: cell.bounds,
-          strokeColor: isImputedVisible ? '#f59e0b' : '#475569',
-          strokeOpacity: isImputedVisible ? 0.85 : 0.25,
-          strokeWeight: isImputedVisible ? 1.0 : 0.5,
-          fillColor: hazard.color,
-          fillOpacity: 0.20,
-          map: map,
-          clickable: true,
-        });
-
-        rect.addListener('click', (e: any) => {
-          if (infoWindowRef.current) {
-            const content = `
-              <div style="font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 11px; padding: 6px 8px; background: #0c0f17; color: #e2e8f0; border: 1px solid #1e2638; border-radius: 6px; min-width: 220px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e2638; padding-bottom: 4px; margin-bottom: 6px;">
-                  <span style="font-size: 9px; font-weight: 700; color: #60a5fa; text-transform: uppercase; letter-spacing: 0.08em; font-family: ui-monospace, monospace;">
-                    AI DOWNSCALED 1km
-                  </span>
-                  <span style="font-size: 9px; padding: 1px 5px; border-radius: 3px; font-family: ui-monospace, monospace; font-weight: 600; background-color: ${hazard.bgColor}; color: ${hazard.color}; border: 1px solid ${hazard.color}40;">
-                    ${hazard.category}
-                  </span>
-                </div>
-                <div style="display: flex; align-items: baseline; gap: 4px; margin-bottom: 4px;">
-                  <span style="font-family: ui-monospace, monospace; font-size: 16px; font-weight: 700; color: #f8fafc;">
-                    ${cell.no2}
-                  </span>
-                  <span style="font-size: 10px; color: #94a3b8;">µg/m³ NO₂</span>
-                </div>
-                <div style="font-size: 10px; color: #94a3b8; font-family: ui-monospace, monospace; line-height: 1.4;">
-                  Grid Coord: ${cell.center[0].toFixed(3)}°N, ${cell.center[1].toFixed(3)}°E
-                </div>
-                ${
-                  cell.isCloudImputed
-                    ? `<div style="font-size: 9px; color: #f59e0b; font-family: ui-monospace, monospace; margin-top: 5px; padding-top: 4px; border-top: 1px dashed #334155; display: flex; align-items: center; justify-content: space-between;">
-                        <span>Autoencoder Infilled</span>
-                        <span>Cloud Cover: ${cell.cloudCover}%</span>
-                      </div>`
-                    : ''
-                }
-              </div>
-            `;
-            infoWindowRef.current.setContent(content);
-            infoWindowRef.current.setPosition(e.latLng || { lat: cell.center[0], lng: cell.center[1] });
-            infoWindowRef.current.open(map);
+          function getColor(val: number) {
+            const normalized = Math.max(0, Math.min(1, (val - min) / (max - min)));
+            const hue = (1.0 - normalized) * 240; 
+            const alpha = normalized * 0.85 + 0.15;
+            return `hsla(${hue}, 100%, 50%, ${alpha})`;
           }
-        });
 
-        downscaledOverlaysRef.current.push(rect);
-      });
+          ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const val = data[y * width + x];
+              if (val > 0) {
+                const cx = x * scale + scale / 2;
+                const cy = y * scale + scale / 2;
+                const radius = scale * 1.8;
+                const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+                grad.addColorStop(0, getColor(val));
+                grad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = grad;
+                ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+              }
+            }
+          }
+
+          const dataUrl = canvas.toDataURL();
+          const bounds = {
+            north: bbox[3],
+            south: bbox[1],
+            east: bbox[2],
+            west: bbox[0]
+          };
+          
+          heatmapLayerRef.current = new google.maps.GroundOverlay(
+            dataUrl,
+            bounds,
+            {
+              opacity: 0.85,
+              map: map,
+              clickable: false
+            }
+          );
+        })
+        .catch(err => console.error("Failed to generate canvas heatmap:", err));
     }
 
     return () => {
-      downscaledOverlaysRef.current.forEach((rect) => rect.setMap(null));
-      downscaledOverlaysRef.current = [];
+      active = false;
+      if (heatmapLayerRef.current) {
+        heatmapLayerRef.current.setMap(null);
+        heatmapLayerRef.current = null;
+      }
     };
-  }, [activeLayers.downscaled, activeLayers.cloudFilled, fineGrid, mapInstance]);
+  }, [activeLayers.downscaled, mapInstance]);
 
   // 6. Render LAYER 3: Wind Vector Advection Arrows
   useEffect(() => {
@@ -663,3 +673,4 @@ export default function MapInner({
     </div>
   );
 }
+
