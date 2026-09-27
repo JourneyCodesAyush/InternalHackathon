@@ -132,3 +132,16 @@ body {
 .snappy-transition {
   transition: all 150ms ease-out;
 }
+
+/* Hide Next.js dev indicator / floating badge */
+nextjs-portal,
+[data-nextjs-toast],
+[data-nextjs-dialog-overlay],
+div[data-next-badge],
+#next-logo-badge,
+button[aria-label*="Next.js"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}

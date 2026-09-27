@@ -1,76 +1,64 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import Sidebar from '../components/Sidebar';
 import FileUploader from '../components/FileUploader';
 import UploadQueue from '../components/UploadQueue';
 import { UploadedSatelliteFile } from '@/lib/types';
 import { ShieldCheck, Zap, Sparkles, FolderArchive } from 'lucide-react';
-
-const INITIAL_MOCK_FILES: UploadedSatelliteFile[] = [
-  {
-    id: 'demo-file-1',
-    name: 'S5P_NRTI_L2__NO2____20240926T074523_MMR_Coastal.nc',
-    sizeBytes: 42 * 1024 * 1024,
-    type: 'NetCDF-4',
-    lastModified: 1727360000000,
-    status: 'COMPLETED',
-    progressPercent: 100,
-    stats: {
-      cloudCoverInitial: 48.2,
-      cloudCoverCleaned: 0.0,
-      originalResolution: '7.0km × 3.5km',
-      downscaledResolution: '1.0km × 1.0km',
-      meanNO2: 68.4,
-      peakNO2: 184.2,
-      processingDurationSec: 1.84,
-    },
-  },
-  {
-    id: 'demo-file-2',
-    name: 'Sentinel5P_Delhi_NCR_WinterInversion_Swath.tif',
-    sizeBytes: 78 * 1024 * 1024,
-    type: 'GeoTIFF',
-    lastModified: 1727350000000,
-    status: 'QUEUED',
-    progressPercent: 0,
-  },
-  {
-    id: 'demo-file-3',
-    name: 'Bengaluru_Industrial_Peenya_Sector_Tile04.hdf5',
-    sizeBytes: 115 * 1024 * 1024,
-    type: 'HDF5',
-    lastModified: 1727340000000,
-    status: 'QUEUED',
-    progressPercent: 0,
-  },
-];
+import { useUploadContext } from '@/lib/upload-context';
 
 export default function UploadPage() {
-  const [files, setFiles] = useState<UploadedSatelliteFile[]>(INITIAL_MOCK_FILES);
+  const router = useRouter();
+  const {
+    files,
+    setFiles,
+    addFiles,
+    removeFile,
+    clearCompleted,
+    folderName,
+    setFolderName,
+  } = useUploadContext();
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Handle newly selected or dropped files / folders
   const handleFilesSelected = (newFiles: File[]) => {
-    const formatted: UploadedSatelliteFile[] = newFiles.map((file, idx) => ({
-      id: `upload-${Date.now()}-${idx}`,
+    if (newFiles.length > 0) {
+      // Check if folder upload was used by checking webkitRelativePath
+      const firstWithPath = newFiles.find(
+        (f) => typeof (f as unknown as { webkitRelativePath?: string }).webkitRelativePath === 'string' &&
+               (f as unknown as { webkitRelativePath?: string }).webkitRelativePath!.length > 0
+      );
+      if (firstWithPath) {
+        const relPath = (firstWithPath as unknown as { webkitRelativePath: string }).webkitRelativePath;
+        const rootFolder = relPath.split('/')[0];
+        if (rootFolder) {
+          setFolderName(rootFolder);
+        }
+      }
+    }
+
+    const formatted = newFiles.map((file, idx) => ({
+      id: `upload-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
       name: file.name,
       sizeBytes: file.size,
       type: file.name.split('.').pop()?.toUpperCase() || 'FILE',
       lastModified: file.lastModified,
-      status: 'QUEUED',
+      status: 'QUEUED' as const,
       progressPercent: 0,
+      _file: file,
     }));
 
-    setFiles((prev) => [...prev, ...formatted]);
+    addFiles(formatted);
   };
 
   const handleRemoveFile = (id: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== id));
+    removeFile(id);
   };
 
   const handleClearCompleted = () => {
-    setFiles((prev) => prev.filter((f) => f.status !== 'COMPLETED'));
+    clearCompleted();
   };
 
   // Simulate execution of the ML pipeline across all queued files
@@ -139,7 +127,7 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#0d0f15]">
+    <div className="flex h-full w-full overflow-hidden bg-[#0d0f15]">
       {/* Shared Navigation Sidebar */}
       <Sidebar />
 
@@ -206,7 +194,11 @@ export default function UploadPage() {
         </div>
 
         {/* File / Folder Dropzone */}
-        <FileUploader onFilesSelected={handleFilesSelected} disabled={isProcessing} />
+        <FileUploader
+          onFilesSelected={handleFilesSelected}
+          disabled={isProcessing}
+          folderName={folderName}
+        />
 
         {/* Upload & Processing Queue */}
         <UploadQueue
