@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { PinpointAttributionResult } from '@/lib/types';
 import StatusBadge from './StatusBadge';
+import DatePicker from '../visualization/_components/DatePicker';
 import { REGULATORY_SCALES } from '@/lib/constants';
 
 interface TrendPanelProps {
@@ -116,21 +117,9 @@ export default function TrendPanel({
             {data.locationName}
           </h2>
           {dates && dates.length > 0 && onDateChange && (
-            <label className="mt-1.5 flex items-center gap-2 text-[11px] text-zinc-400">
-              Date
-              <select
-                value={selectedDate}
-                onChange={(e) => onDateChange(e.target.value)}
-                className="h-6 px-1.5 rounded bg-[#11141d] border border-[#2e3547] text-zinc-200 text-[11px] font-mono cursor-pointer [color-scheme:dark]"
-                aria-label="Data date"
-              >
-                {dates.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="mt-1.5">
+              <DatePicker availableDates={dates} selectedDate={selectedDate ?? ''} onDateChange={onDateChange} />
+            </div>
           )}
         </div>
 

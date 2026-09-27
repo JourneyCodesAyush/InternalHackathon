@@ -18,6 +18,7 @@ import {
   Activity,
 } from 'lucide-react';
 
+import DatePicker from '../visualization/_components/DatePicker';
 import { supabase } from '@/lib/supabase';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -818,18 +819,7 @@ Click any suggested question below or type your inquiry to get instant answers!`
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] font-medium text-zinc-400">Date:</span>
             {useUploaded ? (
-              <select
-                value={reportDate}
-                onChange={(e) => setReportDate(e.target.value)}
-                className="h-6 px-2 rounded bg-[#10131c] border border-[#2e3547] text-zinc-200 text-[11px] font-mono cursor-pointer [color-scheme:dark]"
-                aria-label="Report date"
-              >
-                {availableDates!.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
+              <DatePicker availableDates={availableDates!} selectedDate={reportDate} onDateChange={setReportDate} />
             ) : (
               <input
                 type="date"
