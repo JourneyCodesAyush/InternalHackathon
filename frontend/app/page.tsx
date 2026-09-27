@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Layers, ChevronDown, Bot, Sparkles } from 'lucide-react';
+import Link from 'next/link';
+import { Layers, ChevronDown, Bot, Sparkles, LogIn, LogOut, User as UserIcon } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import MapView from './components/MapView';
 import LocationSearch from './components/LocationSearch';
@@ -9,8 +10,10 @@ import TrendPanel from './components/TrendPanel';
 import ReportGenerator from './components/ReportGenerator';
 import { calculateAttribution, PRESET_REGIONS } from '@/lib/constants';
 import { PinpointAttributionResult } from '@/lib/types';
+import { useAuth } from '@/lib/auth-context';
 
 export default function HomePage() {
+  const { isAuthenticated, displayName, signOut } = useAuth();
   const [mapCenter, setMapCenter] = useState<[number, number]>(PRESET_REGIONS[0].center);
   const [mapZoom, setMapZoom] = useState<number>(PRESET_REGIONS[0].zoom);
   const [selectedLocationName, setSelectedLocationName] = useState<string>('Shivaji Park, Mumbai');
@@ -179,6 +182,38 @@ export default function HomePage() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Top Right Header Controls: Login / Account Action */}
+        <div className="absolute top-4 right-4 z-30 flex items-center gap-2">
+          {isAuthenticated ? (
+            <div className="flex items-center gap-2 h-10 px-3 bg-[#141721]/95 border border-[#2e3547] rounded-md text-xs shadow-xl backdrop-blur-md select-none">
+              <div className="w-6 h-6 rounded-full bg-blue-600/30 border border-blue-500/40 flex items-center justify-center text-blue-400 font-semibold text-[11px]">
+                {displayName.charAt(0).toUpperCase()}
+              </div>
+              <span className="font-medium text-zinc-200 text-xs max-w-[130px] truncate" title={displayName}>
+                {displayName}
+              </span>
+              <button
+                onClick={() => signOut()}
+                className="ml-1 p-1 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors cursor-pointer"
+                title="Sign Out"
+                aria-label="Sign Out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/login"
+              id="top-right-login-btn"
+              className="flex items-center gap-2 h-10 px-4 bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs rounded-md shadow-xl transition-all duration-150 border border-blue-400/40 hover:border-blue-300 hover:shadow-blue-500/25 active:scale-[0.98] select-none shrink-0"
+              title="Sign in to your account"
+            >
+              <LogIn className="w-3.5 h-3.5 shrink-0" />
+              <span>Login</span>
+            </Link>
+          )}
         </div>
 
         {/* The Google Maps Component */}

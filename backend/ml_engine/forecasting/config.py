@@ -19,34 +19,39 @@ from pathlib import Path
 class PhysicsConfig:
     """Parameters for the improved advection-diffusion-reaction solver."""
 
-    # Internal timestep (seconds). 5 min satisfies CFL at 250 m cells and
-    # ~10 m/s winds, but is sub-stepped further if diffusivity demands it.
+    # Internal timestep (seconds). Default 300s (5 min).
     dt_s: float = 300.0
 
-    # Output interval.  The solver accumulates steps and exports at every
-    # 30-min mark for animation-ready frames.
+    # Output interval. The solver accumulates steps and exports at every 30-min mark.
     export_interval_min: int = 30
 
     # Maximum forecast horizon in minutes.
     max_horizon_min: int = 120
 
-    # Horizontal eddy diffusivity (m²/s).  50 gives realistic urban spread at
-    # the 250 m scale.
+    # Horizontal eddy diffusivity (m²/s). Default 50.0.
     diffusivity_m2_s: float = 50.0
 
-    # Daytime NO₂ chemical lifetime via OH oxidation (hours).
+    # Daytime NO₂ chemical lifetime via OH oxidation (hours). Default 4.0h.
     lifetime_h: float = 4.0
 
     # Emission mode: "persistent" = sources keep emitting, "none" = free plume.
     emission_mode: str = "persistent"
 
-    # How often ERA5 winds are refreshed.  ERA5 is hourly, so 60 minutes is
-    # the finest sensible update cadence.
+    # How often ERA5 winds are refreshed.
     wind_update_interval_min: int = 60
 
     # Mass-conservation tolerance: back-projection is skipped if the relative
     # mass error is already below this threshold.
     mass_tol: float = 1e-4
+
+    # Dynamic hourly wind continuous temporal interpolation
+    enable_dynamic_wind: bool = True
+
+    # Lightweight terrain-aware flow deflection & stagnation using DEM and slope
+    enable_terrain_effect: bool = True
+
+    # Source persistence with categorization (power plants, industrial, traffic)
+    enable_source_persistence: bool = True
 
     @property
     def horizon_steps(self) -> list[int]:
@@ -56,6 +61,29 @@ class PhysicsConfig:
             self.max_horizon_min + 1,
             self.export_interval_min,
         ))
+
+    @classmethod
+    def from_env(cls) -> "PhysicsConfig":
+        """Build PhysicsConfig reading environment overrides if present."""
+        import os
+        dt = float(os.getenv("INTERNAL_TIMESTEP", "300"))
+        interval = int(os.getenv("FORECAST_INTERVAL", "30"))
+        max_h = int(os.getenv("MAX_FORECAST_HORIZON", "120"))
+        diff = float(os.getenv("DIFFUSION_COEFFICIENT", "50.0"))
+        life = float(os.getenv("PHOTOCHEMICAL_LIFETIME_HOURS", "4.0"))
+        dyn_wind = os.getenv("ENABLE_DYNAMIC_WIND", "true").lower() in ("true", "1", "yes")
+        terrain = os.getenv("ENABLE_TERRAIN_EFFECT", "true").lower() in ("true", "1", "yes")
+        persist = os.getenv("ENABLE_SOURCE_PERSISTENCE", "true").lower() in ("true", "1", "yes")
+        return cls(
+            dt_s=dt,
+            export_interval_min=interval,
+            max_horizon_min=max_h,
+            diffusivity_m2_s=diff,
+            lifetime_h=life,
+            enable_dynamic_wind=dyn_wind,
+            enable_terrain_effect=terrain,
+            enable_source_persistence=persist,
+        )
 
 
 # ---------------------------------------------------------------------------

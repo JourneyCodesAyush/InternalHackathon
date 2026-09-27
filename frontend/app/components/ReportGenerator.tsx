@@ -18,6 +18,8 @@ import {
   Activity,
 } from 'lucide-react';
 
+import { supabase } from '@/lib/supabase';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const LANGUAGES = [
@@ -621,7 +623,21 @@ Click any suggested question below or type your inquiry to get instant answers!`
       use_ai: true,
       city: guessCity(locationName),
     };
-    const token = typeof window !== 'undefined' ? window.localStorage.getItem('access_token') : null;
+
+    // Ensure we retrieve a fresh access token from Supabase session
+    let token = typeof window !== 'undefined' ? window.localStorage.getItem('access_token') : null;
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session?.access_token) {
+        token = sessionData.session.access_token;
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('access_token', token);
+        }
+      }
+    } catch {
+      // Fall back to localStorage cached token
+    }
+
     let res: Response;
     try {
       res = await fetch(`${API_BASE}/api/v1/reports/${path}`, {
