@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str
     # ML engine: Google Cloud project registered for Earth Engine (maps are generated on demand).
     EE_PROJECT: str | None = None
+    # Reports: optional Gemini key for the narrative sections (read by ml_engine.report from .env too).
+    GEMINI_API_KEY: str | None = None
 
     # "ignore" lets backend/.env also hold variables used by other tools (e.g. OPENAQ_API_KEY).
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}

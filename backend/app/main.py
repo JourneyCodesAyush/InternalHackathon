@@ -25,6 +25,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # let the browser read the report file name and status headers
+    expose_headers=["Content-Disposition", "X-Report-Status", "X-Report-Narrative", "X-Report-Language"],
 )
 
 app.include_router(v1_router, prefix="/api/v1")

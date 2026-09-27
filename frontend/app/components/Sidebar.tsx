@@ -16,6 +16,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import HazardLegend from './HazardLegend';
+import ReportGenerator from './ReportGenerator';
 import { PRESET_REGIONS } from '@/lib/constants';
 
 interface SidebarProps {
@@ -29,6 +30,7 @@ interface SidebarProps {
   onToggleLayer?: (layerKey: 'downscaled' | 'rawCoarse' | 'cloudFilled' | 'windVectors' | 'pois') => void;
   onSelectRegion?: (coords: [number, number], zoom: number) => void;
   selectedCoords?: [number, number] | null;
+  selectedLocationName?: string;
 }
 
 export default function Sidebar({
@@ -42,6 +44,7 @@ export default function Sidebar({
   onToggleLayer,
   onSelectRegion,
   selectedCoords,
+  selectedLocationName = 'Selected area',
 }: SidebarProps) {
   const pathname = usePathname();
   const isMapPage = pathname === '/';
@@ -233,6 +236,9 @@ export default function Sidebar({
             <div>
               <HazardLegend />
             </div>
+
+            {/* Area report (PDF, English / Hindi / Marathi) */}
+            <ReportGenerator locationName={selectedLocationName} coords={selectedCoords} />
           </>
         )}
 

@@ -26,7 +26,8 @@ from .validation import acceptance, regression_metrics, sample_at_stations, summ
 log = logging.getLogger(__name__)
 
 SURFACE_MODEL_FILE = "surface_model.joblib"
-GEE_CACHE_VERSION = 5
+GEE_CACHE_VERSION = 5  # daily satellite + weather data
+STATIC_CACHE_VERSION = 6  # land-use layers (6: Sentinel-2 composite picks scenes per tile)
 FINE_TARGET_RES_DEG = 0.0025  # ~270 m output cells for file inputs of any coarse resolution  # bump when the set of ingested layers changes
 
 
@@ -111,16 +112,23 @@ class NO2Pipeline:
         key = hashlib.sha1(json.dumps([GEE_CACHE_VERSION, cfg.s5p_product, cfg.bbox, cfg.start_date, cfg.end_date, cfg.coarse_res_deg, cfg.refine_factor,
                                        cfg.qa_threshold, cfg.max_cloud_fraction, cfg.min_valid_subpixel_fraction]
                                       ).encode()).hexdigest()[:12]
+        static_key = hashlib.sha1(json.dumps([STATIC_CACHE_VERSION, cfg.bbox, cfg.end_date, cfg.coarse_res_deg,
+                                              cfg.refine_factor]).encode()).hexdigest()[:12]
         cache_dir = Path(cfg.cache_dir)
-        coarse_path, static_path = cache_dir / f"gee_{key}_coarse.nc", cache_dir / f"gee_{key}_static.nc"
-        if coarse_path.exists() and static_path.exists():
-            log.info("Using cached Earth Engine data %s", coarse_path)
-            return xr.load_dataset(coarse_path, engine="h5netcdf"), xr.load_dataset(static_path, engine="h5netcdf")
-        gee.initialize(project=ee_project)
-        coarse, static = gee.load_gee(cfg, self.coarse_grid, self.fine_grid)
+        coarse_path, static_path = cache_dir / f"gee_{key}_coarse.nc", cache_dir / f"static_{static_key}.nc"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        coarse.to_netcdf(coarse_path, engine="h5netcdf")
-        static.to_netcdf(static_path, engine="h5netcdf")
+        coarse = xr.load_dataset(coarse_path, engine="h5netcdf") if coarse_path.exists() else None
+        static = xr.load_dataset(static_path, engine="h5netcdf") if static_path.exists() else None
+        if coarse is not None and static is not None:
+            log.info("Using cached Earth Engine data %s", coarse_path)
+            return coarse, static
+        gee.initialize(project=ee_project)
+        if coarse is None:
+            coarse = gee.load_gee(cfg, self.coarse_grid, self.fine_grid, with_static=False)
+            coarse.to_netcdf(coarse_path, engine="h5netcdf")
+        if static is None:
+            static = gee.load_static(cfg, self.fine_grid)
+            static.to_netcdf(static_path, engine="h5netcdf")
         return coarse, static
 
     # ---------------------------------------------------------------- full run
@@ -248,6 +256,8 @@ class NO2Pipeline:
             "gapfilled_nc": export.to_netcdf(res.gapfilled, out / "coarse_gapfilled.nc"),
             "column_fine_nc": export.to_netcdf(res.column_fine, out / "no2_column_fine.nc"),
             "surface_nc": export.to_netcdf(res.surface, out / "no2_surface_fine.nc"),
+            # land use / population on the fine grid (used by reports for population exposure and sources)
+            "static_nc": export.to_netcdf(res.static, out / "static_fine.nc"),
             "raw_tif": export.to_geotiff(res.coarse["no2"].isel(time=-1), out / f"no2_raw_coarse_{date}.tif"),
             "gapfilled_tif": export.to_geotiff(res.gapfilled["no2"].isel(time=-1), out / f"no2_gapfilled_coarse_{date}.tif"),
             "surface_tif": export.to_geotiff(last, out / f"no2_surface_fine_{date}.tif"),

@@ -1,0 +1,169 @@
+"""Report agent: analysis facts, templates (en/hi/mr), Gemini guard-rails (mocked) and PDF output."""
+
+import json
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from ml_engine import service
+from ml_engine.report import analysis, build_facts, generate_report, llm, texts
+from ml_engine.report.pdf import build_pdf, resolve_fonts
+
+SMALL_BBOX = (72.80, 18.95, 72.975, 19.125)
+
+
+@pytest.fixture(scope="module")
+def runs_root(tmp_path_factory):
+    mp = pytest.MonkeyPatch()
+    root = tmp_path_factory.mktemp("runs")
+    mp.setattr(service, "RUNS_ROOT", root)
+    mp.setattr(service, "WINDOW_DAYS", 12)
+    yield root
+    mp.undo()
+
+
+@pytest.fixture(scope="module")
+def facts(runs_root):
+    return build_facts(bbox=SMALL_BBOX, date="2025-11-20", area_name="Test area", source="synthetic")
+
+
+# ------------------------------------------------------------------------------------------------ analysis
+@pytest.mark.parametrize("mean,share,expected", [
+    (30, 0.0, "normal"), (30, 0.10, "elevated"), (55, 0.0, "elevated"), (95, 0.6, "critical"), (200, 1.0, "critical_spike"),
+])
+def test_classify_status(mean, share, expected):
+    assert analysis.classify_status(mean, share) == expected
+
+
+def test_facts_are_complete(facts):
+    cur = facts["current"]
+    assert cur["status"] in {"normal", "elevated", "critical", "critical_spike"}
+    assert 0 <= cur["share_above_naaqs"] <= 1 and 0 <= cur["share_above_who"] <= 1
+    assert abs(sum(cur["band_shares"].values()) - 1) < 1e-6
+    assert cur["pct_vs_naaqs"] == pytest.approx((cur["mean"] - 80) / 80 * 100, abs=0.2)
+    assert [h["hours"] for h in facts["forecast"]["horizons"]] == [3, 6, 12, 24]
+    assert facts["forecast"]["alerts"] and 1 <= len(facts["hotspots"]) <= 3
+    assert facts["trend"] is not None and facts["trend"]["days"] == 12
+    plain = {k: v for k, v in facts.items() if k not in ("surface_map", "grid", "water_mask")}
+    json.dumps(plain)  # everything handed to templates / the LLM is serialisable
+
+
+def test_weather_adjusted_trend_separates_weather_from_emissions():
+    rng = np.random.default_rng(0)
+    n = 30
+    dates = pd.date_range("2025-11-01", periods=n)
+    blh = rng.normal(900, 200, n)
+    wind = rng.normal(3, 1, n)
+    emissions_trend = 0.5 * np.arange(n)  # +3.5 ug/m3 per week from emissions
+    observed = 40 + emissions_trend - 0.03 * (blh - 900) - 2.0 * (wind - 3) + rng.normal(0, 0.5, n)
+    tr = analysis.weather_adjusted_trend(dates, observed, {"blh": blh, "wind_speed": wind}, report_index=n - 1)
+    assert tr["direction"] == "rising"
+    assert tr["slope_adjusted_per_week"] == pytest.approx(3.5, abs=0.6)
+    assert tr["weather_r2"] > 0.3
+
+
+# ------------------------------------------------------------------------------------------------ templates
+@pytest.mark.parametrize("lang", ["en", "hi", "mr"])
+def test_templates_cover_every_section(facts, lang):
+    assert texts.summary_text(facts, lang).strip()
+    assert texts.risk_text(facts, lang).strip()
+    assert len(texts.recommendations(facts, lang)) >= 3
+    assert texts.forecast_texts(facts, lang) and texts.trend_texts(facts, lang)
+    assert texts.method_text(facts, lang).strip()
+    for key in texts.T["en"]:
+        assert key in texts.T[lang]
+
+
+def test_people_formatting():
+    assert texts.fmt_people(20_500_000, "en") == "20.5 million"
+    assert texts.fmt_people(23_000_000, "hi") == "2.3 करोड़"
+    assert texts.fmt_people(820_000, "mr") == "8.2 लाख"
+
+
+# ------------------------------------------------------------------------------------------------ Gemini guard-rails
+class _Resp:
+    def __init__(self, status, payload=None):
+        self.status_code, self._payload = status, payload
+
+    def json(self):
+        return self._payload
+
+
+def _gemini_payload(obj):
+    return {"candidates": [{"content": {"parts": [{"text": json.dumps(obj, ensure_ascii=False)}]}}]}
+
+
+@pytest.fixture
+def isolated_llm(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm, "MIN_INTERVAL_S", 0.0)
+    monkeypatch.setattr(llm, "_setting", lambda name, default=None: {"GEMINI_API_KEY": "test-key"}.get(name, default))
+    calls = []
+    return calls
+
+
+def test_no_key_means_no_call(facts, monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(llm, "_setting", lambda name, default=None: default)
+    monkeypatch.setattr(llm.httpx, "post", lambda *a, **k: pytest.fail("no HTTP call expected without a key"))
+    assert llm.generate_narrative(facts, "en") is None
+
+
+def test_narrative_is_fact_checked_and_cached(facts, isolated_llm, monkeypatch):
+    mean = round(facts["current"]["mean"])
+    answer = {
+        "executive_summary": f"The area average was {mean} ug/m3 against the 80 ug/m3 standard.",
+        "risk_context": "About 999 schools are affected.",  # invented number -> must be rejected
+        "recommendations": ["Increase monitoring at hotspots.", "Advise sensitive groups.", "Review daily."],
+    }
+
+    def fake_post(*args, **kwargs):
+        isolated_llm.append(kwargs["json"])
+        return _Resp(200, _gemini_payload(answer))
+
+    monkeypatch.setattr(llm.httpx, "post", fake_post)
+    out = llm.generate_narrative(facts, "hi")
+    assert out["executive_summary"].startswith("The area average")
+    assert "risk_context" not in out  # fell back to the template for that part
+    assert len(out["recommendations"]) == 3
+    assert llm.generate_narrative(facts, "hi") == out  # second report: served from cache
+    assert len(isolated_llm) == 1
+    body = isolated_llm[0]
+    assert body["generationConfig"]["responseMimeType"] == "application/json"
+    assert "Hindi" in body["systemInstruction"]["parts"][0]["text"]
+
+
+def test_quota_error_falls_back_and_cools_down(facts, isolated_llm, monkeypatch):
+    monkeypatch.setattr(llm.httpx, "post", lambda *a, **k: (isolated_llm.append(1), _Resp(429))[1])
+    assert llm.generate_narrative(facts, "en") is None
+    assert llm.generate_narrative(facts, "mr") is None  # cooldown: no second request
+    assert len(isolated_llm) == 1
+
+
+# ------------------------------------------------------------------------------------------------ PDF
+def _pages(pdf: bytes) -> int:
+    return pdf.count(b"/Type /Page") - pdf.count(b"/Type /Pages")
+
+
+def test_pdf_english(facts):
+    pdf = build_pdf(facts, "en", None)
+    assert pdf[:4] == b"%PDF" and _pages(pdf) >= 2
+
+
+@pytest.mark.skipif(not resolve_fonts()[2], reason="no Devanagari font on this machine")
+@pytest.mark.parametrize("lang", ["hi", "mr"])
+def test_pdf_devanagari(facts, lang):
+    narrative = {"executive_summary": "सारांश NO2 80", "recommendations": ["पहला", "दूसरा"], "model": "test"}
+    pdf = build_pdf(facts, lang, narrative)
+    assert pdf[:4] == b"%PDF" and _pages(pdf) >= 2
+
+
+def test_generate_report_end_to_end(runs_root, monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "CACHE_DIR", tmp_path)
+    pdf, meta = generate_report(bbox=SMALL_BBOX, date="2025-11-20", area_name="Test area", language="en",
+                                use_ai=False, source="synthetic")
+    assert pdf[:4] == b"%PDF"
+    assert meta["narrative"] == "template" and meta["language"] == "en" and meta["date"] == "2025-11-20"
+    with pytest.raises(ValueError):
+        generate_report(bbox=SMALL_BBOX, date="2025-11-20", language="fr", source="synthetic")

@@ -92,6 +92,7 @@ export default function HomePage() {
         onToggleLayer={handleToggleLayer}
         onSelectRegion={handleSelectRegion}
         selectedCoords={selectedCoords}
+        selectedLocationName={selectedLocationName}
       />
 
       {/* Main Map Canvas Area */}

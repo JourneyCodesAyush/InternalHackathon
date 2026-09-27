@@ -20,14 +20,14 @@ async def generate_report(
     current_user: dict = Depends(get_current_user),
 ) -> StreamingResponse:
     """
-    Generate and stream a PDF report for the specified region and date range.
+    Generate and stream a PDF NO₂ report for an area (English, Hindi or Marathi).
 
-    The PDF includes:
-    - Region metadata and bounding box
-    - A table of NO₂ concentration readings
-    - A health risk summary section
+    The PDF compares the area's ground-level NO₂ on ``end_date`` with the CPCB NAAQS and WHO standards
+    and includes the map and hotspots, population exposure, forecast alerts, the weather-adjusted trend,
+    risk context and recommendations. The first report for an area/date takes ~1-3 minutes.
 
-    Returns the PDF as a downloadable attachment.
+    Response headers: ``X-Report-Status`` (normal/elevated/critical/critical_spike),
+    ``X-Report-Narrative`` (ai/template), ``X-Report-Language``.
     """
     supabase = get_supabase()
     user_id = str(current_user["id"])
@@ -38,4 +38,7 @@ async def generate_report(
         body.bbox,
         body.start_date,
         body.end_date,
+        language=body.language,
+        use_ai=body.use_ai,
+        city=body.city,
     )

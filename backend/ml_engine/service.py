@@ -35,7 +35,8 @@ log = logging.getLogger(__name__)
 RUNS_ROOT = Path(os.environ.get("ML_ENGINE_RUNS_DIR", "outputs/runs"))
 WINDOW_DAYS = 30  # history the gap-filler and downscaler learn from for each requested date
 OFFL_LAG_DAYS = 12  # reprocessed S5P lags ~10 days; newer dates use the near-real-time product
-POINT_HALF_SIZE_DEG = 0.12  # forecast area around a point that falls outside every known city
+POINT_HALF_SIZE_DEG = 0.12
+RUN_FORMAT = 3  # bump when run outputs change (2: static_fine.nc for reports; 3: fixed Sentinel-2 layers)  # forecast area around a point that falls outside every known city
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
@@ -58,7 +59,7 @@ def _run(bbox: tuple[float, float, float, float], day: pd.Timestamp, ee_project:
     product = "OFFL" if (pd.Timestamp.today().normalize() - day).days > OFFL_LAG_DAYS else "NRTI"
     bbox = tuple(round(float(v), 3) for v in bbox)
     model_tag = PRETRAINED_SURFACE_MODEL.stat().st_mtime_ns if PRETRAINED_SURFACE_MODEL.exists() else 0
-    key = hashlib.sha1(json.dumps([bbox, str(start.date()), str(day.date()), product, source, model_tag,
+    key = hashlib.sha1(json.dumps([RUN_FORMAT, bbox, str(start.date()), str(day.date()), product, source, model_tag,
                                    stations_csv]).encode()).hexdigest()[:16]
     run_dir = RUNS_ROOT / key
     with _lock_for(key):
