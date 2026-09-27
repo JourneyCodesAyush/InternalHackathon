@@ -12,11 +12,18 @@ from fastapi import HTTPException
 from supabase import Client
 
 from app.core.config import settings
-from app.models.trends import TrendPrediction, TrendsResponse, ForecastFrame, ForecastResponse
+from app.models.trends import (
+    TrendPrediction,
+    TrendsResponse,
+    ForecastFrame,
+    ForecastResponse,
+)
 from app.services.activity_service import log_activity
 from ml_engine.service import forecast_point, _run, _parse_date, _area_for_point, RUNS_ROOT
 from ml_engine.config import DispersionConfig, PRETRAINED_SURFACE_MODEL
 from ml_engine.grid import GridSpec, upsample_bilinear
+
+
 
 
 async def get_predictions(

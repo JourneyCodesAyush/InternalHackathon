@@ -35,3 +35,5 @@ class ForecastResponse(BaseModel):
     netcdf_url: str
     units: str
     physics_only: bool
+
+

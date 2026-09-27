@@ -3,13 +3,17 @@ from fastapi.responses import FileResponse
 
 from app.core.config import get_supabase
 from app.dependencies import get_current_user
-from app.models.trends import TrendsResponse, ForecastResponse
+from app.models.trends import (
+    TrendsResponse,
+    ForecastResponse,
+)
 from app.services import trends_service
 
 router = APIRouter()
 
 _ALLOWED_HOURS = {3, 6, 12, 24}
 _ALLOWED_INTERVALS = {30, 60, 90, 120}
+
 
 
 @router.get(
@@ -24,6 +28,7 @@ async def get_predictions(
     hours: int,
     current_user: dict = Depends(get_current_user),
 ) -> TrendsResponse:
+
     """
     Return NO₂ concentration predictions for the given coordinates and time horizon.
 
