@@ -2,6 +2,7 @@
 
 import React, { useRef, useCallback } from 'react';
 import { Play, Pause, FastForward, Clock, Activity } from 'lucide-react';
+import DatePicker from './DatePicker';
 
 export interface PlayerControlsProps {
   timestamps: string[];
@@ -12,6 +13,10 @@ export interface PlayerControlsProps {
   onPlayPause: () => void;
   onSpeedChange: (s: 1 | 2 | 4 | 10) => void;
   onSeek: (index: number) => void;
+  availableDates?: string[];
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
+  isLoadingDate?: boolean;
 }
 
 export default function PlayerControls({
@@ -23,6 +28,10 @@ export default function PlayerControls({
   onPlayPause,
   onSpeedChange,
   onSeek,
+  availableDates = [],
+  selectedDate = '',
+  onDateChange,
+  isLoadingDate = false,
 }: PlayerControlsProps) {
   const progressBarRef = useRef<HTMLDivElement | null>(null);
 
@@ -130,12 +139,31 @@ export default function PlayerControls({
           </div>
         </div>
 
-        {/* Center: Timestamp & Interval Display */}
+        {/* Center: Interactive Date Picker (pops UPWARD) & Timestamp Display */}
         <div className="flex items-center gap-2 text-center">
-          <Clock className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-          <span className="font-mono text-xs text-white font-medium tracking-wide">
-            {formattedTimestamp}
-          </span>
+          {availableDates.length > 0 && onDateChange ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-mono text-zinc-400 uppercase hidden md:inline">Base:</span>
+              <DatePicker
+                availableDates={availableDates}
+                selectedDate={selectedDate}
+                onDateChange={onDateChange}
+                isLoading={isLoadingDate}
+                dropUp={true}
+                align="center"
+                variant="inline"
+              />
+            </div>
+          ) : null}
+
+          {/* Time & Active Observation Frame Timestamp */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#141721] border border-[#242938]">
+            <Clock className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <span className="font-mono text-xs text-zinc-100 font-semibold tracking-wide">
+              {formattedTimestamp}
+            </span>
+          </div>
+
           <span className="px-2 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-blue-300 font-mono text-[10px] font-semibold">
             {forecastLeadLabel}
           </span>

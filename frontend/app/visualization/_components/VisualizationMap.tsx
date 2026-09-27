@@ -13,7 +13,7 @@ import ColorScale from './ColorScale';
 
 import { useGeoTiffLoader } from './useGeoTiffLoader';
 import { useAnimationEngine } from './useAnimationEngine';
-import { DEFAULT_BBOX, USE_STUB_DATA, generateSyntheticTimestamps } from './stubs';
+import { DEFAULT_BBOX, USE_STUB_DATA, generateSyntheticTimestamps, DEFAULT_AVAILABLE_DATES } from './stubs';
 
 // Initialize MapLibre Worker from local public bundle
 setWorkerUrl('/maplibre/maplibre-gl-worker.mjs');
@@ -29,6 +29,9 @@ export default function VisualizationMap() {
   const workerRef = useRef<Worker | null>(null);
 
   // Application State
+  const [availableDates, setAvailableDates] = useState<string[]>(DEFAULT_AVAILABLE_DATES);
+  const [selectedDate, setSelectedDate] = useState<string>('2025-11-05');
+  const [isLoadingDate, setIsLoadingDate] = useState(false);
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [currentNo2, setCurrentNo2] = useState<Float32Array | null>(null);
   const [currentBbox, setCurrentBbox] = useState<[number, number, number, number] | null>(DEFAULT_BBOX);
@@ -57,46 +60,47 @@ export default function VisualizationMap() {
     };
   }, []);
 
-  // 2. Fetch or synthesize 30-minute timestamp intervals
+  // 2. Fetch available dates from uploaded test data (backend/data/test_data)
   useEffect(() => {
     let isCancelled = false;
 
-    async function loadTimestamps() {
-      if (USE_STUB_DATA) {
-        setTimestamps(generateSyntheticTimestamps(48));
-        return;
-      }
-
+    async function loadDates() {
       try {
         const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
         const headers: Record<string, string> = {};
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const res = await fetch(`${API_BASE}/api/v1/downscale/timestamps`, { headers });
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const data = await res.json();
-        if (!isCancelled) {
-          if (Array.isArray(data?.timestamps) && data.timestamps.length > 0) {
-            setTimestamps(data.timestamps);
-          } else {
-            setTimestamps(generateSyntheticTimestamps(48));
+        const res = await fetch(`${API_BASE}/api/v1/downscale/dates`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (!isCancelled && Array.isArray(data?.dates) && data.dates.length > 0) {
+            setAvailableDates(data.dates);
+            if (!data.dates.includes(selectedDate)) {
+              setSelectedDate(data.dates[0]);
+            }
           }
         }
       } catch (err) {
-        console.warn('Could not load timestamps from backend, using synthetic interval series:', err);
-        if (!isCancelled) {
-          setTimestamps(generateSyntheticTimestamps(48));
-        }
+        console.warn('Could not load dates from backend, using default date set:', err);
       }
     }
 
-    loadTimestamps();
+    loadDates();
     return () => {
       isCancelled = true;
     };
   }, []);
+
+  // 3. Update 30-minute timestamp intervals whenever selectedDate changes
+  useEffect(() => {
+    setIsLoadingDate(true);
+    const newTimestamps = generateSyntheticTimestamps(48, selectedDate);
+    setTimestamps(newTimestamps);
+    const timer = setTimeout(() => {
+      setIsLoadingDate(false);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [selectedDate]);
 
   // 3. Initialize MapLibre GL Map
   useEffect(() => {
@@ -179,7 +183,14 @@ export default function VisualizationMap() {
 
       {/* Layer 20: Region & Telemetry Info Panel (Top-Left under Back button) */}
       <div className="absolute top-16 left-4 z-20">
-        <RegionInfo bbox={currentBbox} no2={currentNo2} />
+        <RegionInfo
+          bbox={currentBbox}
+          no2={currentNo2}
+          availableDates={availableDates}
+          selectedDate={selectedDate}
+          onDateChange={setSelectedDate}
+          isLoadingDate={isLoadingDate}
+        />
       </div>
 
       {/* Layer 20: Opacity & Display Slider Control (Top-Right) */}
@@ -216,6 +227,10 @@ export default function VisualizationMap() {
         onPlayPause={() => setIsPlaying((p) => !p)}
         onSpeedChange={setSpeedMultiplier}
         onSeek={seek}
+        availableDates={availableDates}
+        selectedDate={selectedDate}
+        onDateChange={setSelectedDate}
+        isLoadingDate={isLoadingDate}
       />
     </div>
   );

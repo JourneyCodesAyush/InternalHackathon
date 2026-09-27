@@ -110,3 +110,37 @@ async def test_get_map_missing_timestamp(auth_client):
         params={"bbox": "72.8,18.9,73.1,19.2"},
     )
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/downscale/dates — available dates from test_data
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_available_dates(auth_client):
+    """GET /api/v1/downscale/dates returns list of available test data dates."""
+    response = await auth_client.get("/api/v1/downscale/dates")
+    assert response.status_code == 200
+    data = response.json()
+    assert "dates" in data
+    assert "count" in data
+    assert len(data["dates"]) > 0
+    assert "2025-11-05" in data["dates"]
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/downscale/geotiff — test data GeoTIFF raster stream
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_geotiff_stream(auth_client):
+    """GET /api/v1/downscale/geotiff returns valid image/tiff."""
+    response = await auth_client.get(
+        "/api/v1/downscale/geotiff",
+        params={"timestamp": "2025-11-05T12:00:00Z"},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/tiff"
+    assert len(response.content) > 0

@@ -2,13 +2,25 @@
 
 import React, { useMemo } from 'react';
 import { Compass, BarChart2 } from 'lucide-react';
+import DatePicker from './DatePicker';
 
 export interface RegionInfoProps {
   bbox: [number, number, number, number] | null;
   no2: Float32Array | null;
+  availableDates?: string[];
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
+  isLoadingDate?: boolean;
 }
 
-export default function RegionInfo({ bbox, no2 }: RegionInfoProps) {
+export default function RegionInfo({
+  bbox,
+  no2,
+  availableDates = [],
+  selectedDate = '',
+  onDateChange,
+  isLoadingDate = false,
+}: RegionInfoProps) {
   // Determine region name based on bounding box
   const regionName = useMemo(() => {
     if (!bbox) return 'Global Coordinate Domain';
@@ -99,6 +111,26 @@ export default function RegionInfo({ bbox, no2 }: RegionInfoProps) {
           <span>ML Prediction</span>
         </div>
       </div>
+
+      {/* Date Filling Form & Small Calendar Selector */}
+      {availableDates.length > 0 && onDateChange && (
+        <div className="mb-2.5 flex items-center justify-between gap-2 bg-[#161a26]/70 border border-[#242938] rounded-lg px-2.5 py-1.5">
+          <div className="flex flex-col">
+            <span className="text-[10px] uppercase font-mono text-zinc-400 tracking-wider">
+              Observation Date
+            </span>
+            <span className="text-[10px] text-zinc-500">
+              {availableDates.length} days in test data
+            </span>
+          </div>
+          <DatePicker
+            availableDates={availableDates}
+            selectedDate={selectedDate}
+            onDateChange={onDateChange}
+            isLoading={isLoadingDate}
+          />
+        </div>
+      )}
 
       {/* Hazard Level Badge */}
       <div
