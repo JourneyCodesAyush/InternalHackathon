@@ -23,7 +23,10 @@ from .pipeline import NO2Pipeline
 
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="ml_engine", description="NO2 gap-fill / downscale / dispersion pipeline")
-    p.add_argument("--source", choices=["synthetic", "gee"], default="synthetic")
+    p.add_argument("--source", choices=["synthetic", "gee", "files"], default="synthetic",
+                   help="synthetic scene, Earth Engine download, or local daily NO2 GeoTIFFs (--input-dir)")
+    p.add_argument("--input-dir", default=None,
+                   help="folder of daily NO2 GeoTIFFs (umol/m2, dated file names) for --source files")
     p.add_argument("--bbox", nargs=4, type=float, metavar=("WEST", "SOUTH", "EAST", "NORTH"), default=None,
                    help="area of interest (default: Mumbai)")
     p.add_argument("--city", default=None, help="city name instead of --bbox, e.g. Pune, Delhi, Bengaluru")
@@ -75,7 +78,7 @@ def main(argv=None) -> int:
     cfg.fetch_osm_roads = args.osm_roads
     if args.surface_model:
         cfg.surface_model_path = Path(args.surface_model)
-    elif args.source == "gee" and not args.train_local and PRETRAINED_SURFACE_MODEL.exists():
+    elif args.source in ("gee", "files") and not args.train_local and PRETRAINED_SURFACE_MODEL.exists():
         cfg.surface_model_path = PRETRAINED_SURFACE_MODEL
     else:
         cfg.surface_model_path = None  # synthetic scenes lack the national model's inputs: train locally
@@ -89,7 +92,8 @@ def main(argv=None) -> int:
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
     res = NO2Pipeline(cfg).run(source=args.source, stations_csv=args.stations, roads_geojson=args.roads,
-                               ee_project=args.ee_project, seed=args.seed, export_outputs=not args.no_export)
+                               ee_project=args.ee_project, seed=args.seed, export_outputs=not args.no_export,
+                               input_dir=args.input_dir)
     print_summary(res.report, cfg.output_dir)
     return 0
 

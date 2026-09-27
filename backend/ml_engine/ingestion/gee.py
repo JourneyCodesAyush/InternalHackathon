@@ -482,10 +482,14 @@ def _activity_image(grid: GridSpec, end: pd.Timestamp):
 # --------------------------------------------------------------------------------------------------
 # Orchestration
 # --------------------------------------------------------------------------------------------------
-def load_gee(cfg: PipelineConfig, coarse: GridSpec, fine: GridSpec) -> tuple[xr.Dataset, xr.Dataset]:
-    """Return (coarse daily dataset, fine static dataset) for the configured AOI and period."""
+def load_gee(cfg: PipelineConfig, coarse: GridSpec, fine: GridSpec,
+             no2: np.ndarray | None = None) -> tuple[xr.Dataset, xr.Dataset]:
+    """Return (coarse daily dataset, fine static dataset) for the configured AOI and period.
+
+    ``no2`` (time, y, x in umol/m^2) replaces the Sentinel-5P download, e.g. with local GeoTIFFs.
+    """
     dates = pd.date_range(cfg.start_date, cfg.end_date, freq="D")
-    no2 = fetch_s5p(dates, coarse, cfg)
+    no2 = fetch_s5p(dates, coarse, cfg) if no2 is None else no2
     met = fetch_era5(dates, coarse)
     blh = fetch_blh(dates, coarse)
     co = fetch_co(dates, coarse, cfg)
