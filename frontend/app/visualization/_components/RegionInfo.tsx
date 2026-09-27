@@ -87,14 +87,14 @@ export default function RegionInfo({ bbox, no2 }: RegionInfoProps) {
   }, [stats]);
 
   return (
-    <div className="absolute top-4 left-4 z-20 w-72 sm:w-80 bg-[#11141d]/95 backdrop-blur-md border border-[#242938] rounded-xl p-3.5 shadow-2xl text-[#f1f3f7] select-none">
+    <div className="w-80 sm:w-96 bg-[#11141d]/95 backdrop-blur-md border border-[#242938] rounded-xl p-3.5 shadow-2xl text-[#f1f3f7] select-none">
       {/* Header with Source Pill */}
-      <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-[#242938]">
-        <div className="flex items-center gap-1.5 font-semibold text-xs tracking-wide text-white">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2 pb-2 border-b border-[#242938] min-w-0">
+        <div className="flex items-center gap-1.5 font-semibold text-xs tracking-wide text-white min-w-0 flex-1">
           <Compass className="w-3.5 h-3.5 text-blue-400 shrink-0" />
           <span className="truncate">{regionName}</span>
         </div>
-        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-[10px] text-blue-300 font-mono shrink-0">
+        <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-[10px] text-blue-300 font-mono shrink-0 whitespace-nowrap">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span>ML Prediction</span>
         </div>

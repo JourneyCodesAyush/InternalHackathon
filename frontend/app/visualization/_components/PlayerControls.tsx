@@ -8,9 +8,9 @@ export interface PlayerControlsProps {
   currentIndex: number;
   t: number; // 0–1 progress within current interval
   isPlaying: boolean;
-  speedMultiplier: 1 | 2 | 4;
+  speedMultiplier: 1 | 2 | 4 | 10;
   onPlayPause: () => void;
-  onSpeedChange: (s: 1 | 2 | 4) => void;
+  onSpeedChange: (s: 1 | 2 | 4 | 10) => void;
   onSeek: (index: number) => void;
 }
 
@@ -108,7 +108,7 @@ export default function PlayerControls({
 
           {/* Speed Multiplier Segmented Buttons */}
           <div className="flex items-center bg-[#141721] p-0.5 rounded-lg border border-[#242938]">
-            {([1, 2, 4] as const).map((spd) => (
+            {([1, 2, 4, 10] as const).map((spd) => (
               <button
                 key={spd}
                 onClick={() => onSpeedChange(spd)}

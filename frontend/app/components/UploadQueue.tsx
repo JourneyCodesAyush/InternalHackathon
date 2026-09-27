@@ -233,32 +233,46 @@ export default function UploadQueue({
                 <div className="p-3 rounded bg-[#161a26] border border-[#242938] space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-zinc-200">
-                      Raw Coarse Satellite Swath
+                      Raw Satellite Input ({selectedFileForInspection._file ? 'Actual File' : 'Swath Profile'})
                     </span>
                     <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-mono text-[10px]">
                       48.2% CLOUD VOID
                     </span>
                   </div>
 
-                  <div className="relative aspect-video rounded bg-[#0a0c12] border border-[#242938] overflow-hidden flex flex-col items-center justify-center p-4">
-                    {/* Simulated Coarse Grid Cells with Cloud Gaps */}
-                    <div className="grid grid-cols-4 grid-rows-3 gap-1 w-full h-full opacity-80">
-                      <div className="bg-purple-900/60 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">72 µg</div>
-                      <div className="bg-zinc-800/80 rounded border border-dashed border-zinc-600 flex items-center justify-center text-[9px] font-mono text-zinc-400">CLOUD</div>
-                      <div className="bg-zinc-800/80 rounded border border-dashed border-zinc-600 flex items-center justify-center text-[9px] font-mono text-zinc-400">CLOUD</div>
-                      <div className="bg-purple-900/50 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">55 µg</div>
-                      <div className="bg-purple-900/70 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">89 µg</div>
-                      <div className="bg-zinc-800/80 rounded border border-dashed border-zinc-600 flex items-center justify-center text-[9px] font-mono text-zinc-400">CLOUD</div>
-                      <div className="bg-purple-900/80 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">110 µg</div>
-                      <div className="bg-purple-900/60 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">68 µg</div>
-                      <div className="bg-zinc-800/80 rounded border border-dashed border-zinc-600 flex items-center justify-center text-[9px] font-mono text-zinc-400">CLOUD</div>
-                      <div className="bg-purple-900/70 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">94 µg</div>
-                      <div className="bg-purple-900/90 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">135 µg</div>
-                      <div className="bg-purple-900/60 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">70 µg</div>
-                    </div>
+                  <div className="relative aspect-video rounded bg-[#0a0c12] border border-[#242938] overflow-hidden flex flex-col items-center justify-center p-2">
+                    {selectedFileForInspection._file &&
+                    (selectedFileForInspection._file.type.startsWith('image/') ||
+                     selectedFileForInspection.name.endsWith('.png') ||
+                     selectedFileForInspection.name.endsWith('.jpg') ||
+                     selectedFileForInspection.name.endsWith('.jpeg')) ? (
+                      <img
+                        src={URL.createObjectURL(selectedFileForInspection._file)}
+                        alt={selectedFileForInspection.name}
+                        className="w-full h-full object-contain rounded"
+                      />
+                    ) : (
+                      /* Simulated Coarse Grid Cells with Cloud Gaps */
+                      <div className="grid grid-cols-4 grid-rows-3 gap-1 w-full h-full opacity-80">
+                        <div className="bg-purple-900/60 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">72 µg</div>
+                        <div className="bg-zinc-800/80 rounded border border-dashed border-zinc-600 flex items-center justify-center text-[9px] font-mono text-zinc-400">CLOUD</div>
+                        <div className="bg-zinc-800/80 rounded border border-dashed border-zinc-600 flex items-center justify-center text-[9px] font-mono text-zinc-400">CLOUD</div>
+                        <div className="bg-purple-900/50 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">55 µg</div>
+                        <div className="bg-purple-900/70 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">89 µg</div>
+                        <div className="bg-zinc-800/80 rounded border border-dashed border-zinc-600 flex items-center justify-center text-[9px] font-mono text-zinc-400">CLOUD</div>
+                        <div className="bg-purple-900/80 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">110 µg</div>
+                        <div className="bg-purple-900/60 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">68 µg</div>
+                        <div className="bg-zinc-800/80 rounded border border-dashed border-zinc-600 flex items-center justify-center text-[9px] font-mono text-zinc-400">CLOUD</div>
+                        <div className="bg-purple-900/70 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">94 µg</div>
+                        <div className="bg-purple-900/90 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">135 µg</div>
+                        <div className="bg-purple-900/60 rounded flex items-center justify-center text-[9px] font-mono text-purple-200">70 µg</div>
+                      </div>
+                    )}
                   </div>
                   <div className="text-[11px] text-zinc-400 leading-snug">
-                    Sentinel-5P TROPOMI Level-2 raster. Contains substantial cloud obscuration gaps and coarse 7km spatial resolution.
+                    {selectedFileForInspection._file
+                      ? `Source file: ${selectedFileForInspection.name} (${formatFileSize(selectedFileForInspection.sizeBytes)})`
+                      : 'Sentinel-5P TROPOMI Level-2 raster. Contains substantial cloud obscuration gaps and coarse spatial resolution.'}
                   </div>
                 </div>
 

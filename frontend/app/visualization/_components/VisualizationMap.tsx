@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { Map, setWorkerUrl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Layers } from 'lucide-react';
+import { Layers, ArrowLeft } from 'lucide-react';
 
 import HeatmapCanvas from './HeatmapCanvas';
 import PlayerControls from './PlayerControls';
@@ -22,6 +23,7 @@ const MUMBAI_CENTER: [number, number] = [72.85, 19.05];
 const INITIAL_ZOOM = 9;
 
 export default function VisualizationMap() {
+  const router = useRouter();
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<Map | null>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -33,7 +35,7 @@ export default function VisualizationMap() {
   const [gridWidth, setGridWidth] = useState(100);
   const [gridHeight, setGridHeight] = useState(100);
   const [isPlaying, setIsPlaying] = useState(true);
-  const [speedMultiplier, setSpeedMultiplier] = useState<1 | 2 | 4>(1);
+  const [speedMultiplier, setSpeedMultiplier] = useState<1 | 2 | 4 | 10>(1);
   const [opacity, setOpacity] = useState(0.75);
 
   // 1. Initialize Web Worker on client mount
@@ -163,8 +165,22 @@ export default function VisualizationMap() {
         opacity={opacity}
       />
 
-      {/* Layer 20: Region & Telemetry Info Panel (Top-Left) */}
-      <RegionInfo bbox={currentBbox} no2={currentNo2} />
+      {/* Layer 20: Navigation / Back Button (Top-Left) */}
+      <div className="absolute top-4 left-4 z-30 flex items-center gap-2">
+        <button
+          onClick={() => router.back()}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#11141d]/95 hover:bg-[#1c2233] text-zinc-300 hover:text-white border border-[#242938] shadow-2xl backdrop-blur-md text-xs font-medium transition-colors cursor-pointer group"
+          aria-label="Go back to previous page"
+        >
+          <ArrowLeft className="w-4 h-4 text-zinc-400 group-hover:text-blue-400 group-hover:-translate-x-0.5 transition-transform" />
+          <span>Back</span>
+        </button>
+      </div>
+
+      {/* Layer 20: Region & Telemetry Info Panel (Top-Left under Back button) */}
+      <div className="absolute top-16 left-4 z-20">
+        <RegionInfo bbox={currentBbox} no2={currentNo2} />
+      </div>
 
       {/* Layer 20: Opacity & Display Slider Control (Top-Right) */}
       <div className="absolute top-4 right-4 z-20 bg-[#11141d]/95 backdrop-blur-md border border-[#242938] rounded-xl p-3 shadow-2xl text-[#f1f3f7] flex items-center gap-3">

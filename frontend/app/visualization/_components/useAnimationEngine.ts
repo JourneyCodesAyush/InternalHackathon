@@ -10,7 +10,7 @@ export type UseAnimationEngineProps = {
   loadFrame: (ts: string) => Promise<Frame>;
   workerRef: React.RefObject<Worker | null>;
   isPlaying: boolean;
-  speedMultiplier: 1 | 2 | 4;
+  speedMultiplier: 1 | 2 | 4 | 10;
   onFrameReady: (
     no2: Float32Array,
     bbox: [number, number, number, number],

@@ -93,6 +93,17 @@ export default function Sidebar({
           <UploadCloud className="w-4 h-4" />
           Model Upload & Clean
         </Link>
+        <Link
+          href="/visualization"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium transition-colors ${
+            pathname === '/visualization'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1b202e]'
+          }`}
+        >
+          <Wind className="w-4 h-4" />
+          Plume Flow
+        </Link>
       </nav>
 
       {/* Scrollable Sub-controls */}
