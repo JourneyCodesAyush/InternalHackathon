@@ -370,15 +370,17 @@ export default function Attitude3D({ isSimulating }: Attitude3DProps) {
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-1" />
         </div>
 
-        <div className="flex items-center gap-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-lg border border-white/10 font-bold">
-          <span className={pitch < 0 ? 'text-blue-400' : 'text-amber-400'}>
-            P: {pitch >= 0 ? `+${pitch}` : pitch}°
+        <div className="flex items-center gap-2.5 bg-black/80 backdrop-blur-md px-3 py-1 rounded-lg border border-white/10 font-bold text-[11px] shadow-lg">
+          <span className="text-emerald-400">
+            ROLL: {roll >= 0 ? `+${roll}` : roll}°
           </span>
-          <span className={roll < 0 ? 'text-rose-400' : 'text-emerald-400'}>
-            R: {roll >= 0 ? `+${roll}` : roll}°
+          <span className="text-white/20">|</span>
+          <span className="text-amber-400">
+            PITCH: {pitch >= 0 ? `+${pitch}` : pitch}°
           </span>
-          <span className="text-cyan-300">
-            Y: {yaw}°
+          <span className="text-white/20">|</span>
+          <span className="text-cyan-400">
+            YAW: {yaw}°
           </span>
         </div>
       </div>

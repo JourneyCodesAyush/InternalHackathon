@@ -39,7 +39,7 @@ export default function DronePortalPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-[#0d0f15] text-[#f1f3f7] p-6 font-sans">
+    <main className="w-full min-h-full bg-[#0d0f15] text-[#f1f3f7] p-4 lg:p-6 pb-28 font-sans">
       <header className="mb-8 border-b border-white/10 pb-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link
