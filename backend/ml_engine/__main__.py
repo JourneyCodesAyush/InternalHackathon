@@ -2,26 +2,32 @@
 
 Examples
   uv run python -m ml_engine --source synthetic
-  uv run python -m ml_engine --source gee --ee-project my-gcp-project --stations data/cpcb_mumbai.csv \
-      --start 2025-11-01 --end 2025-12-31 --bbox 72.77 18.88 73.12 19.32
+  uv run python -m ml_engine --source gee --ee-project my-gcp-project --city Pune --start 2025-11-01 --end 2025-12-31
+  uv run python -m ml_engine --source gee --ee-project my-gcp-project --bbox 72.77 18.88 73.12 19.32 \
+      --start 2025-11-01 --end 2025-12-31 --stations data/cpcb_mumbai.csv   # adds an independent station check
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from .config import DEFAULT_BBOX, PipelineConfig
+from .cities import city_bbox, list_cities
+from .config import DEFAULT_BBOX, PRETRAINED_SURFACE_MODEL, PipelineConfig
 from .pipeline import NO2Pipeline
 
 
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="ml_engine", description="NO2 gap-fill / downscale / dispersion pipeline")
     p.add_argument("--source", choices=["synthetic", "gee"], default="synthetic")
-    p.add_argument("--bbox", nargs=4, type=float, metavar=("WEST", "SOUTH", "EAST", "NORTH"), default=DEFAULT_BBOX)
+    p.add_argument("--bbox", nargs=4, type=float, metavar=("WEST", "SOUTH", "EAST", "NORTH"), default=None,
+                   help="area of interest (default: Mumbai)")
+    p.add_argument("--city", default=None, help="city name instead of --bbox, e.g. Pune, Delhi, Bengaluru")
+    p.add_argument("--list-cities", action="store_true", help="print the known city names and exit")
     p.add_argument("--start", default=None, help="YYYY-MM-DD (default: config)")
     p.add_argument("--end", default=None, help="YYYY-MM-DD inclusive (default: config)")
     p.add_argument("--stations", default=None, help="CSV with station_id,lat,lon,date,no2 (ug/m3)")
@@ -31,12 +37,15 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--station-hours", default="12-16",
                    help="local hours averaged from hourly station data, e.g. 12-16 (S5P overpass); 'all' = full day")
     p.add_argument("--surface-model", default=None,
-                   help="pre-trained surface model (e.g. models/national/surface_model.joblib); --stations then "
-                        "serve as an independent test instead of training data")
+                   help="surface model file (default for --source gee: the shipped national model); --stations "
+                        "then serve as an independent test instead of training data")
+    p.add_argument("--train-local", action="store_true",
+                   help="train the surface model on --stations instead of using the national model")
     p.add_argument("--osm-roads", action="store_true",
                    help="use OpenStreetMap roads instead of GRIP4 for road density (slow; not comparable with "
                         "a nationally trained surface model)")
-    p.add_argument("--ee-project", default=None, help="Google Cloud project registered for Earth Engine")
+    p.add_argument("--ee-project", default=os.environ.get("EE_PROJECT"),
+                   help="Google Cloud project registered for Earth Engine (default: $EE_PROJECT)")
     p.add_argument("--qa", type=float, default=0.75, help="qa_value threshold when the collection has one")
     p.add_argument("--horizons", nargs="+", type=float, default=[1, 3, 6], help="forecast horizons in hours")
     p.add_argument("--out", default=None, help="output directory (default outputs/<timestamp>)")
@@ -49,16 +58,27 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.list_cities:
+        print("\n".join(list_cities()))
+        return 0
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
-    cfg = PipelineConfig(bbox=tuple(args.bbox), qa_threshold=args.qa, model_dir=Path(args.model_dir))
+    if args.city and args.bbox:
+        raise SystemExit("Use either --city or --bbox, not both")
+    bbox = city_bbox(args.city) if args.city else tuple(args.bbox) if args.bbox else DEFAULT_BBOX
+    cfg = PipelineConfig(bbox=bbox, qa_threshold=args.qa, model_dir=Path(args.model_dir))
     if args.start:
         cfg.start_date = args.start
     if args.end:
         cfg.end_date = args.end
     cfg.dispersion.horizons_h = tuple(args.horizons)
     cfg.fetch_osm_roads = args.osm_roads
-    cfg.surface_model_path = Path(args.surface_model) if args.surface_model else None
+    if args.surface_model:
+        cfg.surface_model_path = Path(args.surface_model)
+    elif args.source == "gee" and not args.train_local and PRETRAINED_SURFACE_MODEL.exists():
+        cfg.surface_model_path = PRETRAINED_SURFACE_MODEL
+    else:
+        cfg.surface_model_path = None  # synthetic scenes lack the national model's inputs: train locally
     cfg.s5p_product = args.s5p_product
     if args.station_hours == "all":
         cfg.station_hours = None

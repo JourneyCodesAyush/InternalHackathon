@@ -25,3 +25,11 @@ dependencies = [
     "xarray>=2026.7.0",
     "xgboost>=3.4.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = ["ignore::PendingDeprecationWarning:rioxarray"]

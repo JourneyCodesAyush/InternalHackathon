@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 from scipy import ndimage
 
+from .cities import city_of
 from .config import COLUMN_SCALE
 from .downscaling import column_to_surface
 from .grid import GridSpec, fill_nan_nearest
@@ -47,17 +48,13 @@ DAYS_PER_BATCH = 10
 EXCLUDED_PERIODS = (("2020-03-22", "2020-05-31"),)
 SAMPLE_RADIUS_M = 3500  # ~ one TROPOMI footprint around the station
 OPTIONAL_FEATURES = ("co",)
+NEIGHBOUR_KM = 100.0
 NATIONAL_FEATURES = (
     "column", "pbl_conc", "pbl_conc_anom", "co", "blh", "u10", "v10", "wind_speed", "t2m", "sp", "ssrd", "tp", "sshf",
-    "day_of_week", "weekend", "elevation", "power_plants",
+    "day_of_week", "weekend", "elevation", "power_plants", "sat_imputed",
     *(f"{v}_s{s}" for v in ("night_lights", "ghsl_built", "population", "road_density") for s in FOCAL_SIGMAS_PX),
     "night_lights", "ghsl_built", "population", "road_density",
 )
-
-
-def city_of(name: str) -> str:
-    """'Bandra, Mumbai - MPCB' -> 'Mumbai'."""
-    return str(name).split(" - ")[0].split(",")[-1].strip()
 
 
 # ---------------------------------------------------------------------------------------------------- static
@@ -195,8 +192,72 @@ def daily_features(stations: pd.DataFrame, start: str, end: str, cache_dir: Path
 
 
 # ---------------------------------------------------------------------------------------------------- training
+def fill_station_columns(daily: pd.DataFrame, sites: pd.DataFrame, holdout: float = 0.1,
+                         seed: int = 42) -> tuple[pd.DataFrame, dict]:
+    """Gap-fill the cloud-masked satellite column at stations (Stage-1 logic applied to station series).
+
+    A Random Forest trained on clear-sky station-days predicts cloudy ones from the station's own previous
+    1-2 days, same-day clear values at stations within ``NEIGHBOUR_KM``, the national same-day median, the
+    station's clear-sky climatology, meteorology and season. Scored on a random hold-out of clear values.
+    """
+    from sklearn.ensemble import RandomForestRegressor
+
+    from .validation import regression_metrics
+
+    d = daily.sort_values(["station_id", "date"]).copy()
+    observed = (d["no2_valid"] >= 0.5) & d["column"].notna()
+    d["obs_col"] = d["column"].where(observed)
+
+    # Same-day mean of clear values at neighbouring stations (excluding the station itself).
+    ids = sites["station_id"].to_numpy()
+    lat, lon = sites["lat"].to_numpy(), sites["lon"].to_numpy()
+    km = np.hypot((lat[:, None] - lat[None]) * 110.57,
+                  (lon[:, None] - lon[None]) * 111.32 * np.cos(np.radians(lat[:, None])))
+    w = ((km < NEIGHBOUR_KM) & (km > 0)).astype(float)
+    obs_wide = d.pivot_table(index="date", columns="station_id", values="obs_col").reindex(columns=ids)
+    vals = obs_wide.to_numpy()
+    have = np.isfinite(vals).astype(float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        neigh = (np.nan_to_num(vals) @ w.T) / (have @ w.T)
+    neigh_long = pd.DataFrame(neigh, index=obs_wide.index, columns=ids).stack(future_stack=True).rename("neigh_col")
+    d = d.merge(neigh_long.reset_index().rename(columns={"level_1": "station_id"}), on=["date", "station_id"], how="left")
+    d["nat_col"] = d.groupby("date")["obs_col"].transform("median")
+    d["clim_col"] = d.groupby("station_id")["obs_col"].transform("mean")
+    d = d.merge(sites[["station_id", "lat", "lon"]], on="station_id", how="left")
+    g = d.groupby("station_id")["obs_col"]
+    d["lag1"], d["lag2"] = g.shift(1), g.shift(2)
+    ang = 2 * np.pi * d["date"].dt.dayofyear / 365.25
+    d["doy_sin"], d["doy_cos"] = np.sin(ang), np.cos(ang)
+    feats = ["lag1", "lag2", "neigh_col", "nat_col", "clim_col", "blh", "u10", "v10", "t2m", "sp", "ssrd", "tp",
+             "lat", "lon", "doy_sin", "doy_cos"]
+
+    rng = np.random.default_rng(seed)
+    obs_rows = np.flatnonzero(d["obs_col"].notna().to_numpy())
+    hold = rng.choice(obs_rows, size=int(len(obs_rows) * holdout), replace=False)
+    train = np.setdiff1d(obs_rows, hold)
+    X = d[feats].to_numpy(np.float64)
+    y = d["obs_col"].to_numpy(np.float64)
+    rf = RandomForestRegressor(n_estimators=200, min_samples_leaf=3, n_jobs=-1, random_state=seed)
+    rf.fit(X[train], y[train])
+    holdout_metrics = regression_metrics(y[hold], rf.predict(X[hold]))
+    rf.fit(X[obs_rows], y[obs_rows])
+    missing = d["obs_col"].isna().to_numpy()
+    filled = y.copy()
+    if missing.any():
+        filled[missing] = rf.predict(X[missing])
+    d["column"] = filled
+    d["sat_imputed"] = missing.astype(float)
+    report = {"clear_station_days": int(len(obs_rows)), "imputed_station_days": int(missing.sum()),
+              "holdout_clear_values": holdout_metrics,
+              "importance": dict(sorted(zip(feats, map(float, rf.feature_importances_)), key=lambda kv: -kv[1]))}
+    log.info("Station gap-fill: %d clear + %d imputed station-days; hold-out R2=%.3f RMSE=%.1f umol/m2",
+             len(obs_rows), int(missing.sum()), holdout_metrics["r2"], holdout_metrics["rmse"])
+    return d.drop(columns=["obs_col", "neigh_col", "nat_col", "clim_col", "lag1", "lag2", "doy_sin", "doy_cos",
+                           "lat", "lon"]), report
+
+
 def build_table(stations_csv: str, start: str, end: str, cache_dir: Path, station_hours=(12, 16),
-                exclude_periods=EXCLUDED_PERIODS) -> tuple[pd.DataFrame, dict]:
+                exclude_periods=EXCLUDED_PERIODS, fill_clouds: bool = True) -> tuple[pd.DataFrame, dict]:
     obs = load_stations_csv(stations_csv, station_hours)
     obs = obs[(obs["date"] >= start) & (obs["date"] <= end)]
     for lo, hi in exclude_periods:
@@ -206,8 +267,13 @@ def build_table(stations_csv: str, start: str, end: str, cache_dir: Path, statio
     log.info("Training stations after QC: %d (%d station-days)", len(sites), len(obs))
     static = static_features(sites, end, cache_dir)
     daily = daily_features(sites, start, end, cache_dir)
+    fill_report = None
+    if fill_clouds:
+        daily, fill_report = fill_station_columns(daily, sites)
+    else:
+        daily = daily[(daily["no2_valid"] >= 0.5) & daily["column"].notna()].assign(sat_imputed=0.0)
     table = obs.merge(daily, on=["station_id", "date"]).merge(static, on="station_id")
-    table = table[(table["no2_valid"] >= 0.5) & table["column"].notna() & table["blh"].notna()].copy()
+    table = table[table["column"].notna() & table["blh"].notna()].copy()
     table["pbl_conc"] = column_to_surface(table["column"].to_numpy(), table["blh"].to_numpy())
     table["pbl_conc_mean"] = table.groupby("station_id")["pbl_conc"].transform("mean")
     table["pbl_conc_anom"] = table["pbl_conc"] - table["pbl_conc_mean"]
@@ -217,8 +283,9 @@ def build_table(stations_csv: str, start: str, end: str, cache_dir: Path, statio
     table["city"] = table["name"].map(city_of)
     # CO is often missing (its own cloud/QA gaps); XGBoost handles missing inputs natively, so keep those days.
     table = table.dropna(subset=[f for f in NATIONAL_FEATURES if f in table and f not in OPTIONAL_FEATURES])
-    log.info("Training table: %d clear-sky station-days, %d stations, %d cities",
-             len(table), table.station_id.nunique(), table.city.nunique())
+    log.info("Training table: %d station-days (%d with imputed satellite), %d stations, %d cities",
+             len(table), int(table["sat_imputed"].sum()), table.station_id.nunique(), table.city.nunique())
+    qc = dict(qc, satellite_gapfill=fill_report)
     return table, qc
 
 
@@ -278,12 +345,17 @@ def main(argv=None) -> int:
     p.add_argument("--cache-dir", default="cache/national")
     p.add_argument("--model-out", default="models/national/surface_model.joblib")
     p.add_argument("--report-out", default="models/national/report.json")
+    p.add_argument("--clear-sky-only", action="store_true", help="skip satellite gap-filling at stations")
+    p.add_argument("--station-hours", default="12-16",
+                   help="local hours averaged from hourly station data, e.g. 12-16 (overpass) or 'all' (24 h mean)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
     gee.initialize(project=args.ee_project)
     cache = Path(args.cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
-    table, qc = build_table(args.stations, args.start, args.end, cache)
+    hours = None if args.station_hours == "all" else tuple(int(v) for v in args.station_hours.split("-"))
+    table, qc = build_table(args.stations, args.start, args.end, cache, station_hours=hours,
+                            fill_clouds=not args.clear_sky_only)
     table.to_csv(cache / "training_table.csv.gz", index=False)
     model, report = train_national(table)
     report["station_qc"] = qc

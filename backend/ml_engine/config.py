@@ -7,6 +7,10 @@ from pathlib import Path
 
 DEFAULT_CRS = "EPSG:4326"
 
+# Nationally trained ground-level NO2 model shipped with the package (see ml_engine/national.py and
+# pretrained/no2_surface_24h_report.json for its training data and validation).
+PRETRAINED_SURFACE_MODEL = Path(__file__).resolve().parent / "pretrained" / "no2_surface_24h.joblib"
+
 # Mumbai metropolitan region (west, south, east, north) in EPSG:4326.
 DEFAULT_BBOX: tuple[float, float, float, float] = (72.77, 18.88, 73.12, 19.32)
 

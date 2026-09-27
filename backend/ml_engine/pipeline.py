@@ -103,6 +103,8 @@ class NO2Pipeline:
             ee_project: str | None = None, seed: int = 0, export_outputs: bool = True) -> PipelineResult:
         cfg = self.cfg
         out_dir = Path(cfg.output_dir)
+        if export_outputs:
+            out_dir.mkdir(parents=True, exist_ok=True)
         coarse, static, stations, truth = self.ingest(source, stations_csv, roads_geojson, ee_project, seed)
         report: dict = {
             "source": source,
@@ -138,7 +140,7 @@ class NO2Pipeline:
                                                      export_outputs)
         elif stations is not None and len(stations):
             with self._timer("surface_model"):
-                builder = SurfaceFeatureBuilder(static, coarse, gf.filled, column_fine, cfg.refine_factor)
+                builder = SurfaceFeatureBuilder(static, coarse, gf.filled, column_fine, cfg.refine_factor, gf.flag)
                 table = builder.station_table(stations, self.fine_grid)
                 surface_model, selection, oof = select_surface_model(
                     table, builder.names, cfg.validation.cv_folds, cfg.validation.future_days_fraction)
@@ -191,7 +193,7 @@ class NO2Pipeline:
         """Map with a surface model trained elsewhere (e.g. ``ml_engine.national``); local stations, if given,
         become an independent test of this period (their locations may also appear in the training set)."""
         model = SurfaceModel.load(cfg.surface_model_path)
-        builder = SurfaceFeatureBuilder(static, coarse, gf.filled, column_fine, cfg.refine_factor)
+        builder = SurfaceFeatureBuilder(static, coarse, gf.filled, column_fine, cfg.refine_factor, gf.flag)
         missing = [f for f in model.input_features if f not in builder.names]
         if missing:
             raise ValueError(f"Pre-trained surface model needs inputs this run lacks: {missing}")
@@ -236,7 +238,21 @@ class NO2Pipeline:
             paths[f"forecast_hazard_{h:g}h_geojson"] = export.write_geojson(
                 export.hazard_polygons_geojson(res.forecast.sel(horizon_h=h), self.fine_grid),
                 out / f"no2_hazard_bands_{date}_plus{h:g}h.geojson")
-        return {k: str(p) for k, p in paths.items()}
+        # One file per day for the map's time slider: daily/<YYYY-MM-DD>/{surface, raw, gap-filled, hazard}.
+        daily = {}
+        for t, stamp in enumerate(pd.DatetimeIndex(res.surface.time.values)):
+            day_dir = out / "daily" / str(stamp.date())
+            surface_day = res.surface.isel(time=t)
+            daily[str(stamp.date())] = {
+                "surface_tif": str(export.to_geotiff(surface_day, day_dir / "no2_surface_fine.tif")),
+                "raw_tif": str(export.to_geotiff(res.coarse["no2"].isel(time=t), day_dir / "no2_raw_coarse.tif")),
+                "gapfilled_tif": str(export.to_geotiff(res.gapfilled["no2"].isel(time=t), day_dir / "no2_gapfilled_coarse.tif")),
+                "hazard_geojson": str(export.write_geojson(export.hazard_polygons_geojson(surface_day, self.fine_grid),
+                                                           day_dir / "no2_hazard_bands.geojson")),
+            }
+        result = {k: str(p) for k, p in paths.items()}
+        result["daily"] = daily
+        return result
 
     # ---------------------------------------------------------------- helpers
     class _T:

@@ -51,8 +51,10 @@ XGB_PARAMS = dict(n_estimators=400, max_depth=3, learning_rate=0.03, subsample=0
 
 class SurfaceFeatureBuilder:
     def __init__(self, static_fine: xr.Dataset, coarse: xr.Dataset, no2_coarse_filled: xr.DataArray,
-                 column_fine: xr.DataArray, factor: int):
+                 column_fine: xr.DataArray, factor: int, fill_flag: xr.DataArray | None = None):
         self.factor = factor
+        # 1 where the coarse satellite value was gap-filled (cloud), matching the national model's flag.
+        self.imputed = (fill_flag.values > 0).astype(np.float32) if fill_flag is not None else None
         self.coarse = coarse
         self.no2_coarse = no2_coarse_filled.values.astype(np.float64)
         self.column = column_fine
@@ -79,6 +81,8 @@ class SurfaceFeatureBuilder:
         out["column"] = col
         out["pbl_conc"] = column_to_surface(col, met["blh"])
         out["pbl_conc_anom"] = out["pbl_conc"] - self.static["pbl_conc_mean"]
+        if self.imputed is not None:
+            out["sat_imputed"] = np.repeat(np.repeat(self.imputed[t], f, axis=0), f, axis=1)
         out["pbl_conc_coarse"] = column_to_surface(upsample_bilinear(self.no2_coarse[t], f), met["blh"])
         out["day_of_week"] = np.full(shape, float(day.dayofweek))
         out["weekend"] = np.full(shape, float(day.dayofweek >= 5))

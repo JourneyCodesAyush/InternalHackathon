@@ -184,6 +184,27 @@ def _covering_cache(cache: Path, sensor_id: int, start: str, end: str) -> Path |
     return None
 
 
+def assemble_from_cache(start: str, end: str, out_csv: str | Path, cache_dir: str | Path = "cache/openaq",
+                        country_code: str = "IN") -> pd.DataFrame:
+    """Build the station CSV from sensors already cached for [start, end] - no API calls. Useful after
+    stopping a long download early; sensors not yet downloaded are simply absent."""
+    cache = Path(cache_dir)
+    sensors = pd.read_csv(cache / f"sensors_{country_code}.csv")
+    frames = []
+    for s in sensors.itertuples():
+        path = cache / f"sensor_{s.sensor_id}_{start}_{end}.csv.gz"
+        if not path.exists():
+            continue
+        hours = pd.read_csv(path)
+        if len(hours):
+            frames.append(hours.assign(station_id=f"OPENAQ_{s.location_id}_{s.sensor_id}", name=s.name,
+                                       lat=s.lat, lon=s.lon))
+    out = pd.concat(frames, ignore_index=True)[["station_id", "name", "lat", "lon", "date", "no2"]]
+    out.to_csv(out_csv, index=False)
+    log.info("Assembled %d hourly rows for %d stations from cache into %s", len(out), out.station_id.nunique(), out_csv)
+    return out
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="Download hourly NO2 from OpenAQ into the pipeline's station CSV")
     p.add_argument("--start", default="2019-01-01")
@@ -191,9 +212,13 @@ def main(argv=None) -> int:
     p.add_argument("--country", default="IN")
     p.add_argument("-o", "--out", default="data/openaq_india_no2_hourly.csv")
     p.add_argument("--cache-dir", default="cache/openaq")
+    p.add_argument("--from-cache", action="store_true", help="only assemble already-downloaded sensors (no API calls)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
-    download(args.start, args.end, args.out, args.cache_dir, args.country)
+    if args.from_cache:
+        assemble_from_cache(args.start, args.end, args.out, args.cache_dir, args.country)
+    else:
+        download(args.start, args.end, args.out, args.cache_dir, args.country)
     return 0
 
 

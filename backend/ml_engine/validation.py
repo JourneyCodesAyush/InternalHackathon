@@ -67,7 +67,7 @@ def summarize_predictions(df: pd.DataFrame, obs_col: str = "no2", pred_col: str 
         "overall": regression_metrics(d[obs_col], d[pred_col]),
         "station_mean_spatial": regression_metrics(station_means[obs_col], station_means[pred_col]),
         "temporal_anomaly": regression_metrics(d[obs_col] - means[obs_col], d[pred_col] - means[pred_col]),
-        "median_within_station_r": float(np.nanmedian(within_r)) if len(within_r) else float("nan"),
+        "median_within_station_r": float(np.nanmedian(within_r)) if np.isfinite(within_r).any() else float("nan"),
         "n_stations": int(d["station_id"].nunique()),
         "per_station": per_station,
     }

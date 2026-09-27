@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,10 @@ from rasterio import features
 
 from .config import DEFAULT_CRS
 from .grid import GridSpec
+
+# rioxarray emits one PendingDeprecationWarning (affine `*` vs `@`) per written raster; it is harmless
+# and floods the logs of multi-day exports.
+warnings.filterwarnings("ignore", category=PendingDeprecationWarning, module="rioxarray")
 
 # SRS section 3.3 NO2 regulatory scale (ug/m^3).
 HAZARD_BANDS = [
