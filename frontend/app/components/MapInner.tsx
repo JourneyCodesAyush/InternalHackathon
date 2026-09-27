@@ -3,6 +3,8 @@
 import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { KNOWN_POIS, SAMPLE_WIND_VECTORS, getHazardCategory } from '@/lib/constants';
 import { loadGoogleMaps, DARK_MAP_STYLES } from '@/lib/googleMaps';
+import { useHomeGeoTiffLoader } from './useHomeGeoTiffLoader';
+import { createNO2HeatmapOverlay, INO2HeatmapOverlay } from './NO2HeatmapOverlay';
 
 interface MapInnerProps {
   center: [number, number];
@@ -18,54 +20,6 @@ interface MapInnerProps {
   onMapClick: (coords: [number, number]) => void;
   timeOffsetHours?: number;
   mapTypeId?: 'roadmap' | 'satellite' | 'hybrid' | 'terrain';
-}
-
-// Synthetic high-res 1km downscaled grid cells around active center
-function generateSyntheticGrid(centerLat: number, centerLng: number, timeMultiplier: number = 1.0) {
-  const cells = [];
-  const latStep = 0.012; // ~1.3km
-  const lngStep = 0.014; // ~1.4km
-  const rows = 9;
-  const cols = 9;
-
-  const startLat = centerLat - (rows / 2) * latStep;
-  const startLng = centerLng - (cols / 2) * lngStep;
-
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const south = startLat + r * latStep;
-      const north = south + latStep;
-      const west = startLng + c * lngStep;
-      const east = west + lngStep;
-      const cellCenterLat = (south + north) / 2;
-      const cellCenterLng = (west + east) / 2;
-
-      const distFromCenter = Math.sqrt(
-        Math.pow((cellCenterLat - centerLat) / latStep, 2) +
-        Math.pow((cellCenterLng - centerLng) / lngStep, 2)
-      );
-
-      const baseNO2 = Math.max(
-        22,
-        Math.round(
-          (135 - distFromCenter * 14 + Math.sin(r * 2.2 + c * 1.5) * 38) * timeMultiplier
-        )
-      );
-
-      const cloudCover = Math.abs(Math.sin((r * 7 + c * 13) * 0.4)) * 100;
-      const isCloudImputed = cloudCover > 55;
-
-      cells.push({
-        id: `grid-${r}-${c}`,
-        bounds: { south, west, north, east },
-        center: [cellCenterLat, cellCenterLng] as [number, number],
-        no2: baseNO2,
-        cloudCover: Math.round(cloudCover),
-        isCloudImputed,
-      });
-    }
-  }
-  return cells;
 }
 
 // Synthetic coarse 7km raw satellite footprint
@@ -110,33 +64,20 @@ export default function MapInner({
 
   // Overlay references
   const coarseOverlaysRef = useRef<any[]>([]);
-  const downscaledOverlaysRef = useRef<any[]>([]);
+  const heatmapOverlayRef = useRef<INO2HeatmapOverlay | null>(null);
   const windMarkersRef = useRef<any[]>([]);
   const poiMarkersRef = useRef<any[]>([]);
   const selectedMarkerRef = useRef<any>(null);
   const selectedPulseCircleRef = useRef<any>(null);
+
+  // Load NO2 GeoTIFF data for smooth heatmap
+  const { data: geoTiffData } = useHomeGeoTiffLoader();
 
   // Keep callback fresh in ref
   const onMapClickRef = useRef(onMapClick);
   useEffect(() => {
     onMapClickRef.current = onMapClick;
   }, [onMapClick]);
-
-  const timeMultiplier =
-    timeOffsetHours === 0
-      ? 1.0
-      : timeOffsetHours === 3
-      ? 1.08
-      : timeOffsetHours === 6
-      ? 1.22
-      : timeOffsetHours === 12
-      ? 0.91
-      : 0.85;
-
-  const fineGrid = useMemo(
-    () => generateSyntheticGrid(center[0], center[1], timeMultiplier),
-    [center, timeMultiplier]
-  );
 
   const coarseGrid = useMemo(
     () => generateCoarseGrid(center[0], center[1]),
@@ -387,77 +328,37 @@ export default function MapInner({
     };
   }, [activeLayers.rawCoarse, coarseGrid, mapInstance]);
 
-  // 5. Render LAYER 2: Fine Resolution AI/ML Downscaled Grid (1km)
+  // 5. Render LAYER 2: Fine Resolution AI/ML Cleaned Heatmap Overlay
   useEffect(() => {
     const map = mapInstance;
     const google = (window as any).google;
     if (!map || !google?.maps) return;
 
-    downscaledOverlaysRef.current.forEach((rect) => rect.setMap(null));
-    downscaledOverlaysRef.current = [];
+    if (heatmapOverlayRef.current) {
+      heatmapOverlayRef.current.setMap(null);
+      heatmapOverlayRef.current = null;
+    }
 
-    if (activeLayers.downscaled) {
-      fineGrid.forEach((cell) => {
-        const hazard = getHazardCategory(cell.no2);
-        const isImputedVisible = activeLayers.cloudFilled && cell.isCloudImputed;
-
-        const rect = new google.maps.Rectangle({
-          bounds: cell.bounds,
-          strokeColor: isImputedVisible ? '#f59e0b' : '#475569',
-          strokeOpacity: isImputedVisible ? 0.85 : 0.25,
-          strokeWeight: isImputedVisible ? 1.0 : 0.5,
-          fillColor: hazard.color,
-          fillOpacity: 0.20,
-          map: map,
-          clickable: true,
-        });
-
-        rect.addListener('click', (e: any) => {
-          if (infoWindowRef.current) {
-            const content = `
-              <div style="font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; font-size: 11px; padding: 6px 8px; background: #0c0f17; color: #e2e8f0; border: 1px solid #1e2638; border-radius: 6px; min-width: 220px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #1e2638; padding-bottom: 4px; margin-bottom: 6px;">
-                  <span style="font-size: 9px; font-weight: 700; color: #60a5fa; text-transform: uppercase; letter-spacing: 0.08em; font-family: ui-monospace, monospace;">
-                    AI DOWNSCALED 1km
-                  </span>
-                  <span style="font-size: 9px; padding: 1px 5px; border-radius: 3px; font-family: ui-monospace, monospace; font-weight: 600; background-color: ${hazard.bgColor}; color: ${hazard.color}; border: 1px solid ${hazard.color}40;">
-                    ${hazard.category}
-                  </span>
-                </div>
-                <div style="display: flex; align-items: baseline; gap: 4px; margin-bottom: 4px;">
-                  <span style="font-family: ui-monospace, monospace; font-size: 16px; font-weight: 700; color: #f8fafc;">
-                    ${cell.no2}
-                  </span>
-                  <span style="font-size: 10px; color: #94a3b8;">µg/m³ NO₂</span>
-                </div>
-                <div style="font-size: 10px; color: #94a3b8; font-family: ui-monospace, monospace; line-height: 1.4;">
-                  Grid Coord: ${cell.center[0].toFixed(3)}°N, ${cell.center[1].toFixed(3)}°E
-                </div>
-                ${
-                  cell.isCloudImputed
-                    ? `<div style="font-size: 9px; color: #f59e0b; font-family: ui-monospace, monospace; margin-top: 5px; padding-top: 4px; border-top: 1px dashed #334155; display: flex; align-items: center; justify-content: space-between;">
-                        <span>Autoencoder Infilled</span>
-                        <span>Cloud Cover: ${cell.cloudCover}%</span>
-                      </div>`
-                    : ''
-                }
-              </div>
-            `;
-            infoWindowRef.current.setContent(content);
-            infoWindowRef.current.setPosition(e.latLng || { lat: cell.center[0], lng: cell.center[1] });
-            infoWindowRef.current.open(map);
-          }
-        });
-
-        downscaledOverlaysRef.current.push(rect);
+    if (activeLayers.downscaled && geoTiffData) {
+      const overlay = createNO2HeatmapOverlay({
+        no2: geoTiffData.no2,
+        width: geoTiffData.width,
+        height: geoTiffData.height,
+        bbox: geoTiffData.bbox,
+        opacity: 0.75,
       });
+
+      overlay.setMap(map);
+      heatmapOverlayRef.current = overlay;
     }
 
     return () => {
-      downscaledOverlaysRef.current.forEach((rect) => rect.setMap(null));
-      downscaledOverlaysRef.current = [];
+      if (heatmapOverlayRef.current) {
+        heatmapOverlayRef.current.setMap(null);
+        heatmapOverlayRef.current = null;
+      }
     };
-  }, [activeLayers.downscaled, activeLayers.cloudFilled, fineGrid, mapInstance]);
+  }, [activeLayers.downscaled, geoTiffData, mapInstance]);
 
   // 6. Render LAYER 3: Wind Vector Advection Arrows
   useEffect(() => {

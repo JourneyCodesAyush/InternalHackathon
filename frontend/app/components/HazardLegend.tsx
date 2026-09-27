@@ -43,11 +43,30 @@ export default function HazardLegend({ compact = false }: HazardLegendProps) {
         <span className="text-[10px] font-mono text-zinc-400">µg/m³ standard</span>
       </div>
 
+      {/* Atmospheric continuous gradient bar matching the heatmap overlay */}
+      <div className="mb-3">
+        <div
+          className="h-2 w-full rounded-full border border-black/40 shadow-inner"
+          style={{
+            background:
+              'linear-gradient(to right, #00e400 0%, #ffff00 20%, #ff7e00 40%, #ff0000 60%, #8f3f97 80%, #7e0023 100%)',
+          }}
+        />
+        <div className="flex justify-between text-[9px] text-zinc-400 font-mono mt-1 px-0.5">
+          <span>0</span>
+          <span>40</span>
+          <span>80</span>
+          <span>120</span>
+          <span>160</span>
+          <span>200+</span>
+        </div>
+      </div>
+
       <div className="space-y-2">
         {REGULATORY_SCALES.map((scale) => (
           <div key={scale.category} className="flex items-start gap-2.5">
             <span
-              className="w-2.5 h-2.5 rounded-full shrink-0 mt-0.5"
+              className="w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 shadow-xs"
               style={{ backgroundColor: scale.color }}
             />
             <div className="flex-1 min-w-0">
