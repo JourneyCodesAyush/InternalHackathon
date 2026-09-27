@@ -81,6 +81,15 @@ Both block for ~1–3 minutes the first time an area/period is requested (Earth 
 fitting) and return instantly afterwards (cached in `outputs/runs/`, override with `ML_ENGINE_RUNS_DIR`).
 From async endpoints call them with `await asyncio.to_thread(generate_map, ...)`.
 
+They back two API endpoints (`app/services/downscale_service.py`, `app/services/trends_service.py`):
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/v1/downscale/map?bbox=min_lon,min_lat,max_lon,max_lat&timestamp=2025-12-31` | `grid_url` (250 m GeoTIFF), `raw_url`, `gapfilled_url`, `hazard_geojson_url`, `netcdf_url`, `resolution`, `metrics` |
+| `GET /api/v1/trends/predict?lat=19.07&lon=72.87&hours=24` | NO₂, wind speed, wind direction (from) and confidence every 3 h |
+
+Files are served from the `/files/...` static mount in `app/main.py`. Set `EE_PROJECT` in `backend/.env`.
+
 ## The national ground-level model
 
 `pretrained/no2_surface_24h.joblib` (24-hour mean NO₂) is used by default for `--source gee`. It was
