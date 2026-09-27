@@ -41,7 +41,6 @@ async def generate_report(
         language=body.language,
         use_ai=body.use_ai,
         city=body.city,
-        data_source=body.data_source,
     )
 
 
@@ -62,5 +61,4 @@ async def analyse_area(
     """
     return await reports_service.analyse_area(
         body.region_name, body.bbox, body.end_date, language=body.language, city=body.city,
-        data_source=body.data_source,
     )

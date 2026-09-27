@@ -11,6 +11,3 @@ class ReportRequest(BaseModel):
     language: Literal["en", "hi", "mr"] = "en"
     use_ai: bool = True  # Gemini narrative when a key is configured; the template is used otherwise
     city: Optional[str] = None  # a known city name overrides bbox (shared, cached city areas)
-    # "model": the AI model output covering the bbox centre (the map's data), else the Google Air Quality value
-    # there, else the standards document. "area": a model run for the bbox/city and date (Earth Engine).
-    data_source: Literal["model", "area"] = "model"

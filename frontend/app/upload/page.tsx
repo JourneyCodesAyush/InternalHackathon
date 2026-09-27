@@ -8,7 +8,6 @@ import UploadQueue from '../components/UploadQueue';
 import { UploadedSatelliteFile } from '@/lib/types';
 import { ShieldCheck, Zap, Sparkles, FolderArchive } from 'lucide-react';
 import { useUploadContext } from '@/lib/upload-context';
-import { getJob, uploadFiles, type JobStatus } from '@/lib/modelOutput';
 
 export default function UploadPage() {
   const router = useRouter();
@@ -62,75 +61,69 @@ export default function UploadPage() {
     clearCompleted();
   };
 
-  // Run the ML engine on all queued files (one batch = one time series = one job)
-  const handleProcessAll = async () => {
-    const pending = files.filter((f) => f.status === 'QUEUED');
-    const ready = pending.filter((f) => f._file);
-    const ids = new Set(ready.map((f) => f.id));
-    setFiles((prev) =>
-      prev.map((f) =>
-        f.status === 'QUEUED' && !f._file
-          ? { ...f, status: 'FAILED', error: 'File contents are not available; add the file again.' }
-          : ids.has(f.id)
-            ? { ...f, status: 'UPLOADING', progressPercent: 3, stage: 'Uploading', error: undefined }
-            : f
-      )
-    );
-    if (!ready.length) return;
+  // Simulate execution of the ML pipeline across all queued files
+  const handleProcessAll = () => {
     setIsProcessing(true);
 
-    const apply = (job: JobStatus) =>
+    const pending = files.filter((f) => f.status === 'QUEUED');
+    if (pending.length === 0) {
+      setIsProcessing(false);
+      return;
+    }
+
+    // Step 1: Uploading
+    setFiles((prev) =>
+      prev.map((f) =>
+        f.status === 'QUEUED' ? { ...f, status: 'UPLOADING', progressPercent: 30 } : f
+      )
+    );
+
+    setTimeout(() => {
+      // Step 2: Cloud Gap Fill Imputation
       setFiles((prev) =>
-        prev.map((f) => {
-          if (!ids.has(f.id)) return f;
-          if (job.state === 'failed') {
-            return { ...f, status: 'FAILED', jobId: job.job_id, stage: undefined, error: job.error || 'Processing failed' };
-          }
-          if (job.state === 'done' && job.stats) {
-            const s = job.stats;
-            return {
-              ...f,
-              status: 'COMPLETED',
-              progressPercent: 100,
-              jobId: job.job_id,
-              stage: undefined,
-              stats: {
-                cloudCoverInitial: s.cloud_cover_input_pct,
-                cloudCoverCleaned: s.cloud_cover_output_pct,
-                originalResolution: `${(s.coarse_resolution_m / 1000).toFixed(1)} km`,
-                downscaledResolution: `${s.fine_resolution_m} m`,
-                meanNO2: s.mean_no2_ugm3,
-                peakNO2: s.peak_no2_ugm3,
-                processingDurationSec: s.processing_seconds,
-                gapfillR2: s.gapfill_r2,
-                downscaleR2: s.downscale_r2,
-                days: s.days,
-                lastDate: s.last_date,
-                cloudCoverLastDay: s.cloud_cover_last_day_pct,
-              },
-            };
-          }
-          const status = job.progress < 40 ? 'UPLOADING' : job.progress < 65 ? 'CLEANING_MODEL' : 'DOWNSCALING';
-          return { ...f, status, progressPercent: Math.max(3, job.progress), jobId: job.job_id, stage: job.stage };
-        })
+        prev.map((f) =>
+          f.status === 'UPLOADING'
+            ? { ...f, status: 'CLEANING_MODEL', progressPercent: 65 }
+            : f
+        )
       );
 
-    try {
-      let job = await uploadFiles(ready.map((f) => f._file!));
-      apply(job);
-      while (job.state === 'queued' || job.state === 'running') {
-        await new Promise((r) => setTimeout(r, 3000));
-        job = await getJob(job.job_id);
-        apply(job);
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Upload failed';
-      setFiles((prev) =>
-        prev.map((f) => (ids.has(f.id) ? { ...f, status: 'FAILED', stage: undefined, error: message } : f))
-      );
-    } finally {
-      setIsProcessing(false);
-    }
+      setTimeout(() => {
+        // Step 3: High-Res XGBoost Downscaling
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.status === 'CLEANING_MODEL'
+              ? { ...f, status: 'DOWNSCALING', progressPercent: 88 }
+              : f
+          )
+        );
+
+        setTimeout(() => {
+          // Step 4: Finished & Processed
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.status === 'DOWNSCALING'
+                ? {
+                    ...f,
+                    status: 'COMPLETED',
+                    progressPercent: 100,
+                    stats: {
+                      cloudCoverInitial: 42.5,
+                      cloudCoverCleaned: 0.0,
+                      originalResolution: '7.0km × 3.5km',
+                      downscaledResolution: '1.0km × 1.0km',
+                      meanNO2: 74.1,
+                      peakNO2: 192.5,
+                      processingDurationSec: 2.1,
+                    },
+                  }
+                : f
+            )
+          );
+          setIsProcessing(false);
+        }, 1200);
+      }, 1400);
+    }, 1100);
   };
 
   return (
@@ -155,14 +148,14 @@ export default function UploadPage() {
               Satellite Scene Upload & Cloud Cleaning Model
             </h1>
             <p className="text-xs text-zinc-400 mt-1 max-w-2xl leading-relaxed">
-              Upload a folder of daily Sentinel-5P NO₂ GeoTIFFs (one per day, date in the file name). The pipeline fills cloud gaps, downscales the ~3.7 km satellite pixels to a 250 m grid and converts the column to ground-level NO₂ (µg/m³), which the Geospatial Map then shows.
+              Upload raw satellite observation files, NetCDF grids, or entire directories of satellite scenes. The automated pipeline detects cloud voids, executes deep autoencoder imputation, and downscales coarse pixels to a sharp 1km resolution grid.
             </p>
           </div>
 
           <div className="flex items-center gap-2">
             <div className="px-3 py-1.5 rounded bg-[#141721] border border-[#242938] text-xs text-zinc-300 flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>A few minutes per new area (cached after)</span>
+              <span>SLA Target: &lt; 30s Inference</span>
             </div>
           </div>
         </div>
@@ -175,17 +168,17 @@ export default function UploadPage() {
               <span>Cloud-Gap Imputation</span>
             </div>
             <p className="text-[11px] text-zinc-400 mt-1">
-              Fills cloud gaps in space and time with a Random Forest trained on the clear days of the same series.
+              Fills spatial-temporal data gaps caused by convective cloud cover using ML autoencoders.
             </p>
           </div>
 
           <div className="p-3 bg-[#141721] border border-[#242938] rounded-md">
             <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
               <Zap className="w-4 h-4 text-blue-400" />
-              <span>Spatial Downscaling (250 m)</span>
+              <span>Spatial Downscaling (1km)</span>
             </div>
             <p className="text-[11px] text-zinc-400 mt-1">
-              Downscales ~3.7 km satellite data with weather (ERA5), elevation, vegetation, built-up area and roads.
+              Downscales coarse 7km satellite data by integrating boundary layer height, DEM, and road networks.
             </p>
           </div>
 

@@ -60,21 +60,7 @@ export async function fetchGlobalSnapshot(hours = 24, signal?: AbortSignal): Pro
     const body = await res.json().catch(() => null);
     throw new Error(body?.detail ? String(body.detail) : `Global NO₂ request failed (HTTP ${res.status}).`);
   }
-  return parseSnapshot(await res.json());
-}
-
-/**
- * The real snapshot shipped with the frontend (``public/globe/fallback.json``, written by
- * ``python -m ml_engine.globe --save-demo``), for when the backend cannot be reached.
- */
-export async function fetchFallbackSnapshot(signal?: AbortSignal): Promise<GlobalSnapshot> {
-  const res = await fetch('/globe/fallback.json', { signal });
-  if (!res.ok) throw new Error(`fallback snapshot missing (HTTP ${res.status})`);
-  return { ...parseSnapshot(await res.json()), demo: 'bundled' };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON payload of GET /api/v1/globe/no2
-function parseSnapshot(j: any): GlobalSnapshot {
+  const j = await res.json();
   const n = j.width * j.height;
   const nan = (a: Float32Array) => a.map((x) => (Number.isFinite(x) ? x : 0));
   return {

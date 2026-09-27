@@ -193,12 +193,12 @@ export default function Sidebar({
                     <Grid3x3 className={`w-3.5 h-3.5 shrink-0 ${activeLayers.downscaled ? 'text-blue-400' : 'text-zinc-500'}`} />
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-medium text-zinc-200 truncate">AI Ground-Level NO₂</span>
+                        <span className="font-medium text-zinc-200 truncate">AI Fine Grid (1km)</span>
                         <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
-                          250m RES
+                          1km RES
                         </span>
                       </div>
-                      <div className="text-[10px] text-zinc-400 truncate">Model output · µg/m³</div>
+                      <div className="text-[10px] text-zinc-400 truncate">XGBoost ML Downscaled</div>
                     </div>
                   </div>
                   <div className="relative inline-flex items-center cursor-pointer shrink-0 ml-2">
@@ -237,7 +237,7 @@ export default function Sidebar({
                           GAP-FILL
                         </span>
                       </div>
-                      <div className="text-[10px] text-zinc-400 truncate">Random Forest imputation</div>
+                      <div className="text-[10px] text-zinc-400 truncate">Kriging / Autoencoder</div>
                     </div>
                   </div>
                   <div className="relative inline-flex items-center cursor-pointer shrink-0 ml-2">
@@ -273,7 +273,7 @@ export default function Sidebar({
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium text-zinc-200 truncate">Raw Sentinel-5P</span>
                         <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
-                          ~3.7km
+                          7km SWATH
                         </span>
                       </div>
                       <div className="text-[10px] text-zinc-400 truncate">Coarse Satellite Swath</div>

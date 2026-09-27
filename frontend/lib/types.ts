@@ -95,17 +95,7 @@ export interface UploadedSatelliteFile {
     meanNO2: number; // µg/m³
     peakNO2: number; // µg/m³
     processingDurationSec: number;
-    // from the ML engine job (absent on older entries)
-    gapfillR2?: number;
-    downscaleR2?: number;
-    days?: number;
-    lastDate?: string;
-    cloudCoverLastDay?: number;
   };
   _file?: File;
   error?: string;
-  /** ML engine upload job this file was processed in (all files of one batch share it). */
-  jobId?: string;
-  /** Current pipeline stage while processing, e.g. "Filling cloud gaps". */
-  stage?: string;
 }

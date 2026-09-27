@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { Layers, ChevronDown, Bot, Sparkles, LogIn, LogOut, User as UserIcon } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -10,8 +10,6 @@ import TrendPanel from './components/TrendPanel';
 import ReportGenerator from './components/ReportGenerator';
 import { calculateAttribution, PRESET_REGIONS } from '@/lib/constants';
 import { PinpointAttributionResult } from '@/lib/types';
-import { sampleGrid } from '@/lib/modelOutput';
-import { useHomeGeoTiffLoader } from './components/useHomeGeoTiffLoader';
 import { useAuth } from '@/lib/auth-context';
 
 export default function HomePage() {
@@ -45,17 +43,10 @@ export default function HomePage() {
     pois: false,
   });
 
-  const [panelClosed, setPanelClosed] = useState<boolean>(false);
-
-  // The ML engine's newest ground-level NO₂ map (same data as the heatmap)
-  const { data: modelMap } = useHomeGeoTiffLoader();
-
-  // Pinpoint intelligence: the model's value at the selected point when it lies on the model map
-  const trendData = useMemo<PinpointAttributionResult | null>(() => {
-    if (!selectedCoords) return null;
-    const [lat, lng] = selectedCoords;
-    return calculateAttribution(lat, lng, selectedLocationName, sampleGrid(modelMap?.grid ?? null, lat, lng));
-  }, [selectedCoords, selectedLocationName, modelMap]);
+  // Pinpoint intelligence analysis data
+  const [trendData, setTrendData] = useState<PinpointAttributionResult | null>(() =>
+    calculateAttribution(PRESET_REGIONS[0].center[0], PRESET_REGIONS[0].center[1], 'Shivaji Park, Mumbai')
+  );
 
   // Handle toggling of individual map layers
   const handleToggleLayer = (
@@ -72,12 +63,12 @@ export default function HomePage() {
     setMapCenter(coords);
     setMapZoom(zoom);
     setSelectedCoords(coords);
-    setPanelClosed(false);
     const region = PRESET_REGIONS.find(
       (r) => r.center[0] === coords[0] && r.center[1] === coords[1]
     );
     const name = region?.name || 'Selected Benchmark Region';
     setSelectedLocationName(name);
+    setTrendData(calculateAttribution(coords[0], coords[1], name));
   };
 
   // Handle selecting from location search bar or geocoding
@@ -85,17 +76,17 @@ export default function HomePage() {
     setMapCenter(coords);
     setMapZoom(14); // Fixed locality level
     setSelectedCoords(coords);
-    setPanelClosed(false);
     setSelectedLocationName(name);
+    setTrendData(calculateAttribution(coords[0], coords[1], name));
   };
 
   // Handle clicking directly on map coordinates (pin drop)
   const handleMapClick = (coords: [number, number]) => {
     setSelectedCoords(coords);
-    setPanelClosed(false);
     setMapCenter(coords);
     const customName = `Pinpoint (${coords[0].toFixed(3)}°N, ${coords[1].toFixed(3)}°E)`;
     setSelectedLocationName(customName);
+    setTrendData(calculateAttribution(coords[0], coords[1], customName));
   };
 
   return (
@@ -237,10 +228,10 @@ export default function HomePage() {
         />
 
         {/* Slide-in Trend & Attribution Panel */}
-        {trendData && !panelClosed && (
+        {trendData && (
           <TrendPanel
             data={trendData}
-            onClose={() => setPanelClosed(true)}
+            onClose={() => setTrendData(null)}
             onTimeSliderChange={(offset) => setTimeOffsetHours(offset)}
           />
         )}

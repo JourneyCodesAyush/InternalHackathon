@@ -27,8 +27,12 @@ export default function FileUploader({ onFilesSelected, disabled = false, folder
     disabled,
     accept: {
       'image/tiff': ['.tif', '.tiff'],
+      'application/x-netcdf': ['.nc'],
+      'application/x-hdf': ['.hdf5', '.h5', '.he5'],
+      'image/png': ['.png'],
+      'image/jpeg': ['.jpg', '.jpeg'],
     },
-    maxSize: 50 * 1024 * 1024, // per file; matches the backend limit
+    maxSize: 500 * 1024 * 1024, // 500MB
   });
 
   const handleFolderUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -93,9 +97,11 @@ export default function FileUploader({ onFilesSelected, disabled = false, folder
               </div>
             ) : (
               <div className="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
-                Daily Sentinel-5P NO₂ <span className="font-mono text-zinc-300">GeoTIFF (.tif)</span> files: µmol/m²,
-                EPSG:4326, one grid for all days, date in the name (e.g.{' '}
-                <span className="font-mono text-zinc-300">no2_raw_coarse_2025-12-01.tif</span>)
+                Supported scientific & raster formats: <span className="font-mono text-zinc-300">GeoTIFF (.tif)</span>,{' '}
+                <span className="font-mono text-zinc-300">NetCDF (.nc)</span>,{' '}
+                <span className="font-mono text-zinc-300">HDF5 (.h5)</span>,{' '}
+                <span className="font-mono text-zinc-300">PNG</span>, or{' '}
+                <span className="font-mono text-zinc-300">JPEG</span>
               </div>
             )}
           </div>
@@ -126,13 +132,13 @@ export default function FileUploader({ onFilesSelected, disabled = false, folder
       <div className="flex flex-wrap items-center justify-between text-[11px] text-zinc-400 px-1">
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1">
-            <FileSpreadsheet className="w-3.5 h-3.5 text-blue-400" /> Max 50 MB per file
+            <FileSpreadsheet className="w-3.5 h-3.5 text-blue-400" /> Max file size: 500MB
           </span>
           <span className="flex items-center gap-1">
-            <ImageIcon className="w-3.5 h-3.5 text-teal-400" /> Cloud gap-filling & 250 m downscaling
+            <ImageIcon className="w-3.5 h-3.5 text-teal-400" /> Cloud Masking & Autoencoding
           </span>
         </div>
-        <span className="font-mono text-[10px] text-zinc-400">PIPELINE: RF GAP-FILL → XGBOOST → GROUND-LEVEL</span>
+        <span className="font-mono text-[10px] text-zinc-400">PIPELINE: SATELLITE_GAP_FILL_V2</span>
       </div>
     </div>
   );

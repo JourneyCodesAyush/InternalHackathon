@@ -183,9 +183,7 @@ export function calculateDistanceKm(
 export function calculateAttribution(
   centerLat: number,
   centerLng: number,
-  locationName: string = 'Target Coordinate',
-  /** The ML engine's ground-level NO₂ (µg/m³) at this point, when the point is on the model map. */
-  modelNO2: number | null = null
+  locationName: string = 'Target Coordinate'
 ): PinpointAttributionResult {
   // Find POIs within 12km buffer
   const nearby = KNOWN_POIS.map((poi) => {
@@ -247,7 +245,7 @@ export function calculateAttribution(
   // Determine current NO2 level based on proximity and top emission factor
   const baseNoise = (Math.abs(Math.sin(centerLat * 100) * Math.cos(centerLng * 100)) * 40);
   const primaryFactor = attributedSources[0]?.emissionFactor ?? 0.6;
-  const currentNO2 = modelNO2 !== null ? Math.round(modelNO2) : Math.round(45 + primaryFactor * 95 + baseNoise);
+  const currentNO2 = Math.round(45 + primaryFactor * 95 + baseNoise);
 
   const hazard = getHazardCategory(currentNO2);
 

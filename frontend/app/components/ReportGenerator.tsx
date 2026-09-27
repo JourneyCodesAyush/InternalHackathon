@@ -71,17 +71,7 @@ interface Analysis {
   population: { total: number; above_naaqs: number; share_above_naaqs: number; weighted_mean: number } | null;
   trend: { dates: string[]; observed: number[]; adjusted: number[]; direction: string } | null;
   labels: { status: string; hotspot_sources: string[][] };
-  texts: {
-    summary: string;
-    forecast: string[];
-    trend: string[];
-    recommendations: string[];
-    notice: string | null;
-    source?: string | null; // where the numbers come from (model upload / model run / Google point value)
-  };
-  /** The AI model's value at the selected point (model-output analyses). */
-  point?: { name: string; lat: number; lon: number; value: number | null };
-  data_source?: { kind: 'upload' | 'run' | 'google' };
+  texts: { summary: string; forecast: string[]; trend: string[]; recommendations: string[]; notice: string | null };
 }
 
 function isoDate(d: Date): string {
@@ -163,13 +153,6 @@ function AnalysisPanel({ a }: { a: Analysis }) {
   const status = STATUS_STYLE[cur.status];
   return (
     <div className="space-y-3 pt-1">
-      {a.point && a.point.value !== null && (
-        <div className="p-2 rounded border border-blue-500/40 bg-blue-500/10 text-[11px] text-blue-100">
-          At <span className="font-semibold">{a.point.name}</span>: the model gives{' '}
-          <span className="font-mono font-semibold">{a.point.value.toFixed(0)} µg/m³</span>
-          {a.point.value > 80 ? ' — above' : ' — within'} the CPCB 24-h standard (80).
-        </div>
-      )}
       {a.texts.notice && (
         <div className="flex items-start gap-1.5 p-2 rounded border border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-200 leading-relaxed">
           <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
@@ -205,7 +188,7 @@ function AnalysisPanel({ a }: { a: Analysis }) {
         <table className="w-full text-[10px] mt-1">
           <tbody className="[&_td]:py-0.5">
             <tr>
-              <td className="text-zinc-400">Period average vs annual standard (40)</td>
+              <td className="text-zinc-400">30-day average vs annual standard (40)</td>
               <td className="text-right font-mono text-zinc-200">{a.window_stats.mean.toFixed(0)}</td>
             </tr>
             <tr>
@@ -289,7 +272,6 @@ function AnalysisPanel({ a }: { a: Analysis }) {
         <p className="text-zinc-300 leading-relaxed">{a.texts.trend[0]}</p>
       </div>
 
-      {a.texts.source && <p className="text-[9px] text-zinc-400 leading-relaxed">{a.texts.source}</p>}
       <p className="text-[9px] text-zinc-500 leading-relaxed">
         Model estimates at 250 m; typical error about ±23 µg/m³ per location and day. Use for trends and hotspots.
       </p>
@@ -338,8 +320,8 @@ const PREDEFINED_QUESTIONS: PredefinedQuestion[] = [
   {
     id: 'methodology',
     icon: '🛰️',
-    label: '250 m Satellite Downscaling',
-    query: 'How does the satellite NO₂ downscaling (3.7 km to 250 m) work?',
+    label: '1km Satellite Downscaling',
+    query: 'How does the satellite NO₂ downscaling technology (7km to 1km) work?',
   },
 ];
 
@@ -403,15 +385,8 @@ function getAgentResponse(
           : cur.status === 'elevated'
           ? 'Moderately Elevated'
           : 'Critical / Unhealthy';
-      const pointLine =
-        analysis.point && analysis.point.value !== null
-          ? `• **At ${analysis.point.name}:** the model gives **${analysis.point.value.toFixed(0)} µg/m³** (${
-              analysis.point.value > 80 ? 'above' : 'within'
-            } the CPCB 24-h standard of 80 µg/m³).\n`
-          : '';
-      const sourceLine = analysis.texts.source ? `\n_${analysis.texts.source}_` : '';
-      return `Based on ${analysis.data_source?.kind === 'google' ? 'the measured value' : 'the AI model output'} for **${analysis.area.name}** on ${analysis.date}:
-${pointLine}• **Area Average NO₂:** **${cur.mean.toFixed(0)} µg/m³** (${Math.abs(diff).toFixed(0)}% ${
+      return `Based on satellite assessment for **${locationName}** on ${analysis.date}:
+• **Area Average NO₂:** **${cur.mean.toFixed(0)} µg/m³** (${Math.abs(diff).toFixed(0)}% ${
         diff > 0 ? 'above' : 'below'
       } the CPCB 24-h standard of 80 µg/m³).
 • **Regulatory Status:** **${analysis.labels.status.toUpperCase()}** (${statusText}).
@@ -465,7 +440,7 @@ ${list}
 • **Industrial & Processing Facilities:** Fuel combustion, boilers, and industrial generator sets.
 • **Thermal Power & Utility Stacks:** Elevated plumes that disperse downwind according to atmospheric flow.
 
-Click **'Analyse Area'** to pinpoint specific high-intensity hotspots detected on the 250 m model map.`;
+Click **'Analyse Area'** to pinpoint specific high-intensity hotspots detected on the 1km downscaled satellite grid.`;
   }
 
   // 3. Health & Advisories
@@ -544,10 +519,10 @@ Click **'Analyse Area'** to calculate 24-h hourly dispersion projections.`;
     q.includes('resolution')
   ) {
     return `**AeroPulse High-Resolution Downscaling Architecture:**
-1. **Satellite Ingest:** Daily tropospheric NO₂ columns from ESA Sentinel-5P TROPOMI on a ~3.7 km grid (uploaded GeoTIFFs or Google Earth Engine).
-2. **Cloud Gap-Filling:** A Random Forest trained on the clear days of the same series fills cloud gaps (R² ≈ 0.9 on held-out pixels).
-3. **Downscaling:** XGBoost sharpens the column to 250 m using ERA5 weather, elevation, Sentinel-2 vegetation and built-up area, night lights and roads, while keeping each 3.7 km average equal to the satellite.
-4. **Ground Level:** A model trained on 212 CPCB stations in 115 cities converts the column to ground-level µg/m³ (typical error ±23 µg/m³ per station-day), which is compared with the CPCB and WHO limits.`;
+1. **Satellite Ingest:** Daily Level-2/3 tropospheric NO₂ vertical column density from ESA Sentinel-5P TROPOMI (nominal 7km × 3.5km).
+2. **Imputation Pipeline:** Spatial autoencoders and Kriging interpolate cloud gaps (achieving R² > 0.85).
+3. **Multi-Source Features:** Blends ECMWF ERA5 meteorology (wind u/v, boundary layer height), SRTM digital elevation (DEM), and OpenStreetMap land-use categories.
+4. **XGBoost Downscaling:** Gradient boosted trees infer ground-level concentrations at fine 1km / 250m resolution.`;
   }
 
   // Default custom answer

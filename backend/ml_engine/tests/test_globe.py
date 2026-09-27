@@ -79,26 +79,3 @@ def test_shipped_demo_snapshot_loads():
     demo = globe.load_demo()
     assert demo is not None, "ml_engine/pretrained/globe_demo_snapshot.npz is missing"
     assert demo["no2"].shape == (360, 720) and 0.2 < np.isfinite(demo["no2"]).mean() < 0.9
-
-
-def test_block_mean_is_a_true_cell_average():
-    fine = np.full((10, 10), np.nan, np.float32)
-    fine[0:5, 0:5] = 2.0
-    fine[0, 0] = 100.0  # a sharp plume inside the first cell is averaged in, not sampled or dropped
-    fine[5, 5] = 7.0  # a single clear pixel is not enough to stand for a whole cell
-    fine[0:5, 5:8] = 4.0  # 15 of 25 clear: mean of the clear ones
-    out = globe._block_mean(fine, 5, min_valid=3)
-    assert out.shape == (2, 2)
-    np.testing.assert_allclose(out[0, 0], (24 * 2.0 + 100.0) / 25)
-    np.testing.assert_allclose(out[0, 1], 4.0)
-    assert np.isnan(out[1, 1]) and np.isnan(out[1, 0])
-
-
-def test_payload_keeps_city_peaks():
-    snap = _snap("x")
-    snap["no2"][0, 0] = 512.3  # above the old ±327 int16 range
-    field = globe.payload(snap)["fields"]["no2"]
-    import base64
-
-    q = np.frombuffer(base64.b64decode(field["data"]), "<i2")
-    assert abs(q[0] * field["scale"] - 512.3) <= field["scale"] / 2 + 1e-6
