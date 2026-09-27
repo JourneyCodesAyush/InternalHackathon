@@ -415,9 +415,22 @@ export default function MapInner({
           if (!ctx) return;
 
           function getColor(val: number) {
-            const normalized = Math.max(0, Math.min(1, (val - min) / (max - min)));
+            // Absolute range for NO2: 0 to ~250
+            const absoluteMin = 0;
+            const absoluteMax = 250;
+            const normalized = Math.max(0, Math.min(1, (val - absoluteMin) / (absoluteMax - absoluteMin)));
+            
+            // Hue ranges from 240 (blue) for low to 0 (red) for high
             const hue = (1.0 - normalized) * 240; 
-            const alpha = normalized * 0.85 + 0.15;
+            
+            // Make lower values completely transparent to avoid the "solid box" effect
+            // and isolate the plume
+            let alpha = 0;
+            if (normalized > 0.2) {
+              alpha = (normalized - 0.2) * 1.25; // fade in from 0.2 to 1.0
+              alpha = Math.min(alpha, 0.95);
+            }
+            
             return `hsla(${hue}, 100%, 50%, ${alpha})`;
           }
 
@@ -426,10 +439,10 @@ export default function MapInner({
           for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
               const val = data[y * width + x];
-              if (val > 0) {
+              if (val > 40) { // Only draw if there is significant NO2
                 const cx = x * scale + scale / 2;
                 const cy = y * scale + scale / 2;
-                const radius = scale * 1.8;
+                const radius = scale * 2.0; // slightly larger for smoother blending
                 const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
                 grad.addColorStop(0, getColor(val));
                 grad.addColorStop(1, 'rgba(0,0,0,0)');
