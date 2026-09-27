@@ -17,6 +17,7 @@ interface MapInnerProps {
   selectedCoords?: [number, number] | null;
   onMapClick: (coords: [number, number]) => void;
   timeOffsetHours?: number;
+  mapTypeId?: 'roadmap' | 'satellite' | 'hybrid' | 'terrain';
 }
 
 // Synthetic high-res 1km downscaled grid cells around active center
@@ -98,6 +99,7 @@ export default function MapInner({
   selectedCoords,
   onMapClick,
   timeOffsetHours = 0,
+  mapTypeId = 'roadmap',
 }: MapInnerProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [mapInstance, setMapInstance] = useState<any>(null);
@@ -141,7 +143,7 @@ export default function MapInner({
     [center]
   );
 
-  // Smooth cinematic camera flight controller
+  // Robust, reliable camera movement controller
   const flyTo = useCallback((targetCenter: [number, number], targetZoom: number) => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -154,31 +156,52 @@ export default function MapInner({
     const currentCenter = map.getCenter();
     if (!currentCenter) {
       map.setCenter({ lat: targetCenter[0], lng: targetCenter[1] });
-      map.setZoom(targetZoom);
+      map.setZoom(Math.round(targetZoom));
       return;
     }
 
     const startLat = currentCenter.lat();
     const startLng = currentCenter.lng();
-    const startZoom = typeof map.getZoom === 'function' ? map.getZoom() : targetZoom;
+    const currentZoom = Math.round(typeof map.getZoom === 'function' ? map.getZoom() : targetZoom);
 
     const dLat = targetCenter[0] - startLat;
     const dLng = targetCenter[1] - startLng;
     const dist = Math.sqrt(dLat * dLat + dLng * dLng);
 
-    // If already exactly at destination, skip animation
-    if (dist < 0.00005 && Math.abs(startZoom - targetZoom) < 0.05) {
+    // If practically already at destination, skip
+    if (dist < 0.00005) {
       return;
     }
 
-    // Dynamic flight duration based on geographical distance
-    const duration = dist < 0.05 ? 650 : dist < 2 ? 950 : Math.min(1600, Math.round(900 + dist * 65));
+    // Dynamic viewport visibility check across any device screen size
+    const bounds = typeof map.getBounds === 'function' ? map.getBounds() : null;
+    const google = (window as any).google;
+    const targetLatLng = google?.maps?.LatLng
+      ? new google.maps.LatLng(targetCenter[0], targetCenter[1])
+      : { lat: targetCenter[0], lng: targetCenter[1] };
 
-    // Mid-flight zoom out arc for long-distance transitions (cinematic feel)
-    const minZoom = Math.min(startZoom, targetZoom);
-    const zoomDipAmount = dist > 0.25 ? Math.min(4.5, Math.log2(dist * 2.8 + 1)) : 0;
-    const midFlightZoom = Math.max(4.5, minZoom - zoomDipAmount);
+    const isWithinView = bounds ? bounds.contains(targetLatLng) : dist < 0.04;
 
+    // SCENARIO 1: Target is visible within current view (e.g. pin drop anywhere in view)
+    // The level of zoom DOES NOT CHANGE; smoothly pan to center on the target.
+    if (isWithinView) {
+      map.panTo({ lat: targetCenter[0], lng: targetCenter[1] });
+      return;
+    }
+
+    // SCENARIO 2: Target is outside current view (search or far benchmark region)
+    // Zoom out, move across to the new location, and zoom back in to fixed locality level (14)
+    const targetLocalityZoom = 14; // Fixed level that clearly shows the locality
+
+    // Determine how far to zoom out based on distance
+    const dipZoom =
+      dist > 3.0
+        ? Math.max(5, Math.min(currentZoom, targetLocalityZoom) - 4)
+        : dist > 0.6
+        ? Math.max(7, Math.min(currentZoom, targetLocalityZoom) - 3)
+        : Math.max(9, Math.min(currentZoom, targetLocalityZoom) - 2);
+
+    const duration = dist > 3.0 ? 1400 : dist > 0.6 ? 1000 : 750;
     const startTime = performance.now();
 
     function easeInOutCubic(t: number): number {
@@ -193,39 +216,30 @@ export default function MapInner({
       const curLat = startLat + dLat * eased;
       const curLng = startLng + dLng * eased;
 
-      let curZoom: number;
-      if (zoomDipAmount > 0) {
-        const arc = Math.sin(progress * Math.PI);
-        const linearZoom = startZoom + (targetZoom - startZoom) * eased;
-        curZoom = linearZoom - (linearZoom - midFlightZoom) * arc * 0.85;
-      } else {
-        curZoom = startZoom + (targetZoom - startZoom) * eased;
-      }
+      map.setCenter({ lat: curLat, lng: curLng });
 
-      if (typeof map.moveCamera === 'function') {
-        map.moveCamera({
-          center: { lat: curLat, lng: curLng },
-          zoom: curZoom,
-        });
-      } else {
-        map.setCenter({ lat: curLat, lng: curLng });
-        if (progress === 1 || Math.abs(map.getZoom() - Math.round(curZoom)) >= 1) {
-          map.setZoom(Math.round(curZoom));
-        }
+      // Phase 1 (0 to 35%): Zoom out to dip zoom
+      if (progress < 0.35) {
+        const outProgress = progress / 0.35;
+        const z = Math.round(currentZoom + (dipZoom - currentZoom) * outProgress);
+        if (map.getZoom() !== z) map.setZoom(z);
+      }
+      // Phase 2 (35% to 65%): Glide across terrain at dip zoom
+      else if (progress < 0.65) {
+        if (map.getZoom() !== dipZoom) map.setZoom(dipZoom);
+      }
+      // Phase 3 (65% to 100%): Swoop in to target locality zoom
+      else {
+        const inProgress = (progress - 0.65) / 0.35;
+        const z = Math.round(dipZoom + (targetLocalityZoom - dipZoom) * inProgress);
+        if (map.getZoom() !== z) map.setZoom(z);
       }
 
       if (progress < 1) {
         animFrameRef.current = requestAnimationFrame(step);
       } else {
-        if (typeof map.moveCamera === 'function') {
-          map.moveCamera({
-            center: { lat: targetCenter[0], lng: targetCenter[1] },
-            zoom: targetZoom,
-          });
-        } else {
-          map.setCenter({ lat: targetCenter[0], lng: targetCenter[1] });
-          map.setZoom(targetZoom);
-        }
+        map.setCenter({ lat: targetCenter[0], lng: targetCenter[1] });
+        map.setZoom(targetLocalityZoom);
         animFrameRef.current = null;
       }
     }
@@ -244,22 +258,17 @@ export default function MapInner({
         if (!mapInstanceRef.current) {
           const map = new googleMaps.Map(mapContainerRef.current, {
             center: { lat: center[0], lng: center[1] },
-            zoom: zoom,
-            isFractionalZoomEnabled: true,
+            zoom: Math.round(zoom),
             styles: DARK_MAP_STYLES,
-            mapTypeId: 'roadmap',
+            mapTypeId: mapTypeId,
             backgroundColor: '#0d0f15',
             disableDefaultUI: false,
             zoomControl: true,
             zoomControlOptions: {
               position: googleMaps.ControlPosition.RIGHT_BOTTOM,
             },
-            mapTypeControl: true,
-            mapTypeControlOptions: {
-              style: googleMaps.MapTypeControlStyle.DROPDOWN_MENU,
-              position: googleMaps.ControlPosition.TOP_RIGHT,
-              mapTypeIds: ['roadmap', 'satellite', 'hybrid', 'terrain'],
-            },
+            // Native dropdown disabled; custom styled dropdown is in the top bar beside TROPOMI box
+            mapTypeControl: false,
             streetViewControl: false,
             fullscreenControl: false,
             scaleControl: true,
@@ -312,7 +321,14 @@ export default function MapInner({
     flyTo(center, zoom);
   }, [center, zoom, mapInstance, flyTo]);
 
-  // 3. Render LAYER 1: Raw Coarse Satellite Footprint (7km x 3.5km)
+  // 3. Update map type when prop changes
+  useEffect(() => {
+    if (mapInstance && mapTypeId) {
+      mapInstance.setMapTypeId(mapTypeId);
+    }
+  }, [mapTypeId, mapInstance]);
+
+  // 4. Render LAYER 1: Raw Coarse Satellite Footprint (7km x 3.5km)
   useEffect(() => {
     const map = mapInstance;
     const google = (window as any).google;
@@ -365,7 +381,7 @@ export default function MapInner({
     };
   }, [activeLayers.rawCoarse, coarseGrid, mapInstance]);
 
-  // 4. Render LAYER 2: Fine Resolution AI/ML Downscaled Grid (1km)
+  // 5. Render LAYER 2: Fine Resolution AI/ML Downscaled Grid (1km)
   useEffect(() => {
     const map = mapInstance;
     const google = (window as any).google;
@@ -431,7 +447,7 @@ export default function MapInner({
     };
   }, [activeLayers.downscaled, activeLayers.cloudFilled, fineGrid, mapInstance]);
 
-  // 5. Render LAYER 3: Wind Vector Advection Arrows
+  // 6. Render LAYER 3: Wind Vector Advection Arrows
   useEffect(() => {
     const map = mapInstance;
     const google = (window as any).google;
@@ -488,7 +504,7 @@ export default function MapInner({
     };
   }, [activeLayers.windVectors, mapInstance]);
 
-  // 6. Render LAYER 4: Pollution Source POIs (Factories, Highways, Power Plants)
+  // 7. Render LAYER 4: Pollution Source POIs (Factories, Highways, Power Plants)
   useEffect(() => {
     const map = mapInstance;
     const google = (window as any).google;
@@ -556,7 +572,7 @@ export default function MapInner({
     };
   }, [activeLayers.pois, mapInstance]);
 
-  // 7. Render Selected Coords Pinpoint Marker
+  // 8. Render Selected Coords Pinpoint Marker
   useEffect(() => {
     const map = mapInstance;
     const google = (window as any).google;

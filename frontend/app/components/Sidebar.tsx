@@ -33,11 +33,11 @@ interface SidebarProps {
 
 export default function Sidebar({
   activeLayers = {
-    downscaled: true,
+    downscaled: false,
     rawCoarse: false,
     cloudFilled: false,
-    windVectors: true,
-    pois: true,
+    windVectors: false,
+    pois: false,
   },
   onToggleLayer,
   onSelectRegion,
