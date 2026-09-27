@@ -18,7 +18,7 @@ const API_BASE = 'http://localhost:8000';
 
 /** AQI-style NO₂ color scale matching the WHO / EPA breakpoints */
 const NO2_SCALE = chroma
-  .scale(['#00e400', '#ffff00', '#ff7e00', '#ff0000', '#8f3f97', '#7e0023'])
+  .scale(['#10b981', '#eab308', '#f97316', '#ef4444', '#9333ea', '#6b1124'])
   .domain([0, 40, 80, 120, 160, 200])
   .mode('lch');
 

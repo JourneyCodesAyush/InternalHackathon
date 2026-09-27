@@ -2,12 +2,12 @@
 
 // NO₂ AQI breakpoints and labels — must mirror the chroma scale in GeoTiffLayer
 const LEGEND_STOPS = [
-  { value: 0,   color: '#00e400', label: '0',    category: 'Good' },
-  { value: 40,  color: '#ffff00', label: '40',   category: 'Moderate' },
-  { value: 80,  color: '#ff7e00', label: '80',   category: 'Unhealthy' },
-  { value: 120, color: '#ff0000', label: '120',  category: 'Very Unhealthy' },
-  { value: 160, color: '#8f3f97', label: '160',  category: 'Severe' },
-  { value: 200, color: '#7e0023', label: '200+', category: 'Hazardous' },
+  { value: 0,   color: '#10b981', label: '0',    category: 'Satisfactory' },
+  { value: 40,  color: '#eab308', label: '40',   category: 'Moderate' },
+  { value: 80,  color: '#f97316', label: '80',   category: 'Unhealthy' },
+  { value: 120, color: '#ef4444', label: '120',  category: 'Very Unhealthy' },
+  { value: 160, color: '#9333ea', label: '160',  category: 'Severe' },
+  { value: 200, color: '#6b1124', label: '200+', category: 'Hazardous' },
 ];
 
 const GRADIENT = LEGEND_STOPS.map((s) => s.color).join(', ');
@@ -15,16 +15,16 @@ const GRADIENT = LEGEND_STOPS.map((s) => s.color).join(', ');
 export default function ColorLegend() {
   return (
     <div
-      className="fixed z-40 flex flex-col gap-2"
+      className="fixed z-40 flex flex-col gap-2 shadow-2xl"
       style={{
         right: '16px',
         bottom: '96px', // above the TimeSlider (~80px tall)
-        background: 'rgba(5, 7, 15, 0.80)',
-        backdropFilter: 'blur(12px)',
+        background: 'rgba(9, 12, 19, 0.88)',
+        backdropFilter: 'blur(16px)',
         border: '1px solid rgba(255,255,255,0.08)',
         borderRadius: '12px',
-        padding: '14px 12px',
-        width: '136px',
+        padding: '12px 12px',
+        width: '142px',
       }}
     >
       {/* Title */}
