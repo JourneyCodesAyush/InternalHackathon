@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { KNOWN_POIS, SAMPLE_WIND_VECTORS, getHazardCategory } from '@/lib/constants';
 import { loadGoogleMaps, DARK_MAP_STYLES } from '@/lib/googleMaps';
 
@@ -100,10 +100,13 @@ export default function MapInner({
   timeOffsetHours = 0,
 }: MapInnerProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  const [mapInstance, setMapInstance] = useState<any>(null);
   const mapInstanceRef = useRef<any>(null);
   const infoWindowRef = useRef<any>(null);
+  const animFrameRef = useRef<number | null>(null);
+  const isFirstRenderRef = useRef<boolean>(true);
 
-  // Overlay references to allow clean add/remove
+  // Overlay references
   const coarseOverlaysRef = useRef<any[]>([]);
   const downscaledOverlaysRef = useRef<any[]>([]);
   const windMarkersRef = useRef<any[]>([]);
@@ -138,6 +141,98 @@ export default function MapInner({
     [center]
   );
 
+  // Smooth cinematic camera flight controller
+  const flyTo = useCallback((targetCenter: [number, number], targetZoom: number) => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+
+    const currentCenter = map.getCenter();
+    if (!currentCenter) {
+      map.setCenter({ lat: targetCenter[0], lng: targetCenter[1] });
+      map.setZoom(targetZoom);
+      return;
+    }
+
+    const startLat = currentCenter.lat();
+    const startLng = currentCenter.lng();
+    const startZoom = typeof map.getZoom === 'function' ? map.getZoom() : targetZoom;
+
+    const dLat = targetCenter[0] - startLat;
+    const dLng = targetCenter[1] - startLng;
+    const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+
+    // If already exactly at destination, skip animation
+    if (dist < 0.00005 && Math.abs(startZoom - targetZoom) < 0.05) {
+      return;
+    }
+
+    // Dynamic flight duration based on geographical distance
+    const duration = dist < 0.05 ? 650 : dist < 2 ? 950 : Math.min(1600, Math.round(900 + dist * 65));
+
+    // Mid-flight zoom out arc for long-distance transitions (cinematic feel)
+    const minZoom = Math.min(startZoom, targetZoom);
+    const zoomDipAmount = dist > 0.25 ? Math.min(4.5, Math.log2(dist * 2.8 + 1)) : 0;
+    const midFlightZoom = Math.max(4.5, minZoom - zoomDipAmount);
+
+    const startTime = performance.now();
+
+    function easeInOutCubic(t: number): number {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+
+    function step(now: number) {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = easeInOutCubic(progress);
+
+      const curLat = startLat + dLat * eased;
+      const curLng = startLng + dLng * eased;
+
+      let curZoom: number;
+      if (zoomDipAmount > 0) {
+        const arc = Math.sin(progress * Math.PI);
+        const linearZoom = startZoom + (targetZoom - startZoom) * eased;
+        curZoom = linearZoom - (linearZoom - midFlightZoom) * arc * 0.85;
+      } else {
+        curZoom = startZoom + (targetZoom - startZoom) * eased;
+      }
+
+      if (typeof map.moveCamera === 'function') {
+        map.moveCamera({
+          center: { lat: curLat, lng: curLng },
+          zoom: curZoom,
+        });
+      } else {
+        map.setCenter({ lat: curLat, lng: curLng });
+        if (progress === 1 || Math.abs(map.getZoom() - Math.round(curZoom)) >= 1) {
+          map.setZoom(Math.round(curZoom));
+        }
+      }
+
+      if (progress < 1) {
+        animFrameRef.current = requestAnimationFrame(step);
+      } else {
+        if (typeof map.moveCamera === 'function') {
+          map.moveCamera({
+            center: { lat: targetCenter[0], lng: targetCenter[1] },
+            zoom: targetZoom,
+          });
+        } else {
+          map.setCenter({ lat: targetCenter[0], lng: targetCenter[1] });
+          map.setZoom(targetZoom);
+        }
+        animFrameRef.current = null;
+      }
+    }
+
+    animFrameRef.current = requestAnimationFrame(step);
+  }, []);
+
   // 1. Initialize Google Map Instance
   useEffect(() => {
     let isCancelled = false;
@@ -150,6 +245,7 @@ export default function MapInner({
           const map = new googleMaps.Map(mapContainerRef.current, {
             center: { lat: center[0], lng: center[1] },
             zoom: zoom,
+            isFractionalZoomEnabled: true,
             styles: DARK_MAP_STYLES,
             mapTypeId: 'roadmap',
             backgroundColor: '#0d0f15',
@@ -169,10 +265,9 @@ export default function MapInner({
             scaleControl: true,
           });
 
-          // Single reusable InfoWindow
           infoWindowRef.current = new googleMaps.InfoWindow();
 
-          // Handle map click
+          // Map click handler
           map.addListener('click', (e: any) => {
             if (e.latLng && onMapClickRef.current) {
               const lat = e.latLng.lat();
@@ -181,7 +276,16 @@ export default function MapInner({
             }
           });
 
+          // Cancel flight animation if user interacts directly
+          map.addListener('dragstart', () => {
+            if (animFrameRef.current) {
+              cancelAnimationFrame(animFrameRef.current);
+              animFrameRef.current = null;
+            }
+          });
+
           mapInstanceRef.current = map;
+          setMapInstance(map);
         }
       })
       .catch((err) => {
@@ -190,35 +294,30 @@ export default function MapInner({
 
     return () => {
       isCancelled = true;
+      if (animFrameRef.current) {
+        cancelAnimationFrame(animFrameRef.current);
+      }
     };
   }, []); // Run once on mount
 
-  // 2. Smoothly pan & zoom when center or zoom props change
+  // 2. Smoothly move and zoom map when center or zoom changes
   useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map) return;
+    if (!mapInstance) return;
 
-    const currentCenter = map.getCenter();
-    if (
-      !currentCenter ||
-      Math.abs(currentCenter.lat() - center[0]) > 0.0001 ||
-      Math.abs(currentCenter.lng() - center[1]) > 0.0001
-    ) {
-      map.panTo({ lat: center[0], lng: center[1] });
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return;
     }
 
-    if (map.getZoom() !== zoom) {
-      map.setZoom(zoom);
-    }
-  }, [center, zoom]);
+    flyTo(center, zoom);
+  }, [center, zoom, mapInstance, flyTo]);
 
   // 3. Render LAYER 1: Raw Coarse Satellite Footprint (7km x 3.5km)
   useEffect(() => {
-    const map = mapInstanceRef.current;
+    const map = mapInstance;
     const google = (window as any).google;
     if (!map || !google?.maps) return;
 
-    // Clear old coarse overlays
     coarseOverlaysRef.current.forEach((rect) => rect.setMap(null));
     coarseOverlaysRef.current = [];
 
@@ -264,15 +363,14 @@ export default function MapInner({
       coarseOverlaysRef.current.forEach((rect) => rect.setMap(null));
       coarseOverlaysRef.current = [];
     };
-  }, [activeLayers.rawCoarse, coarseGrid]);
+  }, [activeLayers.rawCoarse, coarseGrid, mapInstance]);
 
   // 4. Render LAYER 2: Fine Resolution AI/ML Downscaled Grid (1km)
   useEffect(() => {
-    const map = mapInstanceRef.current;
+    const map = mapInstance;
     const google = (window as any).google;
     if (!map || !google?.maps) return;
 
-    // Clear old downscaled overlays
     downscaledOverlaysRef.current.forEach((rect) => rect.setMap(null));
     downscaledOverlaysRef.current = [];
 
@@ -331,15 +429,14 @@ export default function MapInner({
       downscaledOverlaysRef.current.forEach((rect) => rect.setMap(null));
       downscaledOverlaysRef.current = [];
     };
-  }, [activeLayers.downscaled, activeLayers.cloudFilled, fineGrid]);
+  }, [activeLayers.downscaled, activeLayers.cloudFilled, fineGrid, mapInstance]);
 
   // 5. Render LAYER 3: Wind Vector Advection Arrows
   useEffect(() => {
-    const map = mapInstanceRef.current;
+    const map = mapInstance;
     const google = (window as any).google;
     if (!map || !google?.maps) return;
 
-    // Clear old wind markers
     windMarkersRef.current.forEach((marker) => marker.setMap(null));
     windMarkersRef.current = [];
 
@@ -389,15 +486,14 @@ export default function MapInner({
       windMarkersRef.current.forEach((marker) => marker.setMap(null));
       windMarkersRef.current = [];
     };
-  }, [activeLayers.windVectors]);
+  }, [activeLayers.windVectors, mapInstance]);
 
   // 6. Render LAYER 4: Pollution Source POIs (Factories, Highways, Power Plants)
   useEffect(() => {
-    const map = mapInstanceRef.current;
+    const map = mapInstance;
     const google = (window as any).google;
     if (!map || !google?.maps) return;
 
-    // Clear old POI markers
     poiMarkersRef.current.forEach((marker) => marker.setMap(null));
     poiMarkersRef.current = [];
 
@@ -458,11 +554,11 @@ export default function MapInner({
       poiMarkersRef.current.forEach((marker) => marker.setMap(null));
       poiMarkersRef.current = [];
     };
-  }, [activeLayers.pois]);
+  }, [activeLayers.pois, mapInstance]);
 
   // 7. Render Selected Coords Pinpoint Marker
   useEffect(() => {
-    const map = mapInstanceRef.current;
+    const map = mapInstance;
     const google = (window as any).google;
     if (!map || !google?.maps) return;
 
@@ -476,7 +572,6 @@ export default function MapInner({
     }
 
     if (selectedCoords) {
-      // Outer target halo
       const pulseCircle = new google.maps.Circle({
         strokeColor: '#3b82f6',
         strokeOpacity: 0.8,
@@ -488,7 +583,6 @@ export default function MapInner({
         radius: 350,
       });
 
-      // Center Pinpoint Marker
       const marker = new google.maps.Marker({
         position: { lat: selectedCoords[0], lng: selectedCoords[1] },
         icon: {
@@ -533,7 +627,7 @@ export default function MapInner({
         selectedPulseCircleRef.current = null;
       }
     };
-  }, [selectedCoords]);
+  }, [selectedCoords, mapInstance]);
 
   return (
     <div className="relative w-full h-full bg-[#0d0f15]">

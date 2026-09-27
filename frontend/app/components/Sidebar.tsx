@@ -28,6 +28,7 @@ interface SidebarProps {
   };
   onToggleLayer?: (layerKey: 'downscaled' | 'rawCoarse' | 'cloudFilled' | 'windVectors' | 'pois') => void;
   onSelectRegion?: (coords: [number, number], zoom: number) => void;
+  selectedCoords?: [number, number] | null;
 }
 
 export default function Sidebar({
@@ -40,6 +41,7 @@ export default function Sidebar({
   },
   onToggleLayer,
   onSelectRegion,
+  selectedCoords,
 }: SidebarProps) {
   const pathname = usePathname();
   const isMapPage = pathname === '/';
@@ -103,16 +105,32 @@ export default function Sidebar({
                 Benchmark Regions
               </div>
               <div className="space-y-1">
-                {PRESET_REGIONS.map((region) => (
-                  <button
-                    key={region.name}
-                    onClick={() => onSelectRegion?.(region.center, region.zoom)}
-                    className="w-full text-left px-2.5 py-1.5 rounded text-xs text-zinc-300 bg-[#161a26] border border-[#242938] hover:border-zinc-500 hover:bg-[#1c2233] transition-colors"
-                  >
-                    <div className="font-medium text-zinc-200 truncate">{region.name}</div>
-                    <div className="text-[10px] text-zinc-400 truncate">{region.description}</div>
-                  </button>
-                ))}
+                {PRESET_REGIONS.map((region) => {
+                  const isSelected =
+                    selectedCoords &&
+                    Math.abs(selectedCoords[0] - region.center[0]) < 0.01 &&
+                    Math.abs(selectedCoords[1] - region.center[1]) < 0.01;
+
+                  return (
+                    <button
+                      key={region.name}
+                      onClick={() => onSelectRegion?.(region.center, region.zoom)}
+                      className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-all cursor-pointer ${
+                        isSelected
+                          ? 'bg-blue-600/20 border border-blue-500/80 text-white shadow-sm ring-1 ring-blue-500/30'
+                          : 'text-zinc-300 bg-[#161a26] border border-[#242938] hover:border-zinc-500 hover:bg-[#1c2233]'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className={`font-medium truncate ${isSelected ? 'text-blue-200' : 'text-zinc-200'}`}>
+                          {region.name}
+                        </span>
+                        {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />}
+                      </div>
+                      <div className="text-[10px] text-zinc-400 truncate mt-0.5">{region.description}</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
