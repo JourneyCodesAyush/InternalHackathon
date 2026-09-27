@@ -140,3 +140,36 @@ def test_city_bbox_aliases_and_errors():
     assert west < 73.86 < east and south < 18.52 < north
     with pytest.raises(KeyError, match="Mumbai"):
         city_bbox("Mumbia")
+
+
+# ------------------------------------------------------------------------------------------------ file input
+def _write_tif(path, data, units="umol m-2"):
+    import rasterio
+    from rasterio.transform import from_origin
+
+    with rasterio.open(path, "w", driver="GTiff", height=data.shape[0], width=data.shape[1], count=1,
+                       dtype="float32", crs="EPSG:4326", transform=from_origin(72.8, 19.1, 0.035, 0.035),
+                       nodata=float("nan")) as dst:
+        dst.write(data.astype("float32"), 1)
+        dst.update_tags(units=units)
+
+
+def test_geotiff_folder_input(tmp_path):
+    from ml_engine.ingestion.files import load_no2_geotiffs
+
+    a = np.full((4, 5), 120.0)
+    a[0, 0] = np.nan  # a cloudy pixel
+    _write_tif(tmp_path / "no2_2025-11-01.tif", a)
+    _write_tif(tmp_path / "no2_2025-11-03.tif", a)  # 2 Nov missing -> a fully cloudy day
+    dates, stack, grid = load_no2_geotiffs(tmp_path)
+    assert [str(d.date()) for d in dates] == ["2025-11-01", "2025-11-02", "2025-11-03"]
+    assert stack.shape == (3, 4, 5) and np.isnan(stack[1]).all() and np.isnan(stack[0, 0, 0])
+    assert grid.res == pytest.approx(0.035) and grid.west == pytest.approx(72.8)
+
+
+def test_geotiff_input_converts_mol_per_m2(tmp_path):
+    from ml_engine.ingestion.files import load_no2_geotiffs
+
+    _write_tif(tmp_path / "day_2025-11-01.tif", np.full((3, 3), 1.2e-4), units="mol m-2")
+    _, stack, _ = load_no2_geotiffs(tmp_path)
+    assert stack[0, 0, 0] == pytest.approx(120.0, rel=1e-4)
