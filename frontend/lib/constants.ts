@@ -6,8 +6,8 @@ export const REGULATORY_SCALES: RegulatoryScale[] = [
     range: [0, 40],
     label: '0 - 40 µg/m³',
     category: 'NORMAL',
-    color: '#10b981', // Emerald / Green
-    bgColor: 'rgba(16, 185, 129, 0.15)',
+    color: '#00e400', // Green (0-40 µg/m³ on heatmap)
+    bgColor: 'rgba(0, 228, 0, 0.15)',
     description: 'Air quality is satisfactory.',
     healthAdvisory: 'Air pollution poses little or no risk. Safe for all demographic groups.',
   },
@@ -15,8 +15,8 @@ export const REGULATORY_SCALES: RegulatoryScale[] = [
     range: [41, 80],
     label: '41 - 80 µg/m³',
     category: 'MODERATE',
-    color: '#eab308', // Yellow
-    bgColor: 'rgba(234, 179, 8, 0.15)',
+    color: '#ffff00', // Yellow (40-80 µg/m³ on heatmap)
+    bgColor: 'rgba(255, 255, 0, 0.15)',
     description: 'Acceptable; sensitive individuals take caution.',
     healthAdvisory: 'Unusually sensitive individuals with preexisting respiratory conditions should consider limiting prolonged outdoor exertion.',
   },
@@ -24,8 +24,8 @@ export const REGULATORY_SCALES: RegulatoryScale[] = [
     range: [81, 180],
     label: '81 - 180 µg/m³',
     category: 'UNHEALTHY',
-    color: '#f97316', // Orange
-    bgColor: 'rgba(249, 115, 22, 0.15)',
+    color: '#ff7e00', // Orange (80-160 µg/m³ on heatmap)
+    bgColor: 'rgba(255, 126, 0, 0.15)',
     description: 'Prolonged exposure causes respiratory discomfort.',
     healthAdvisory: 'Asthmatics, children, and elderly persons should avoid outdoor exercise. General public may experience irritation.',
   },
@@ -33,8 +33,8 @@ export const REGULATORY_SCALES: RegulatoryScale[] = [
     range: [181, 500],
     label: '> 180 µg/m³',
     category: 'HAZARDOUS',
-    color: '#ef4444', // Red
-    bgColor: 'rgba(239, 68, 68, 0.15)',
+    color: '#ff0000', // Red/Crimson (> 180 µg/m³ on heatmap)
+    bgColor: 'rgba(255, 0, 0, 0.15)',
     description: 'Trigger industrial/traffic reduction alerts.',
     healthAdvisory: 'Emergency health warning: Entire population is likely to be affected. Restrict industrial stack output and vehicular traffic corridors.',
   },
