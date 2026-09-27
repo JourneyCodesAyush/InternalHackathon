@@ -6,3 +6,10 @@ __pycache__
 !.env.example
 node_modules
 .DS_Store
+.venv
+
+# ML engine run artefacts and large regenerable data
+backend/outputs/
+backend/models/
+backend/cache/
+backend/data/openaq_india_no2_hourly*.csv

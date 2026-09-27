@@ -1,0 +1,507 @@
+{
+  "n_rows": 44174,
+  "n_stations": 212,
+  "n_cities": 115,
+  "features": [
+    "column",
+    "pbl_conc",
+    "pbl_conc_anom",
+    "co",
+    "blh",
+    "u10",
+    "v10",
+    "wind_speed",
+    "t2m",
+    "sp",
+    "ssrd",
+    "tp",
+    "sshf",
+    "day_of_week",
+    "weekend",
+    "elevation",
+    "power_plants",
+    "sat_imputed",
+    "night_lights_s2",
+    "night_lights_s6",
+    "ghsl_built_s2",
+    "ghsl_built_s6",
+    "population_s2",
+    "population_s6",
+    "road_density_s2",
+    "road_density_s6",
+    "night_lights",
+    "ghsl_built",
+    "population",
+    "road_density"
+  ],
+  "evaluations": {
+    "unseen_stations_and_dates": {
+      "design": "space-time blocked CV: 5 station groups x 5 date blocks over 212 stations",
+      "candidates": {
+        "linear_satellite": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.020107739933815205,
+            "rmse": 25.959288879133357,
+            "mae": 17.317814341530475,
+            "mbe": -4.194272105441035,
+            "pearson_r": 0.21919621286571794
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": -0.010155192274006408,
+            "rmse": 16.308330572938413,
+            "mae": 12.048733243456242,
+            "mbe": -4.626769416661753,
+            "pearson_r": 0.26917963015340174
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.023214985429362844,
+            "rmse": 20.76058423881647,
+            "mae": 13.656256823821867,
+            "mbe": 2.1618360050291454e-16,
+            "pearson_r": 0.18520253148829438
+          },
+          "median_within_station_r": 0.1196977151475019,
+          "n_stations": 212,
+          "selectable": true
+        },
+        "xgb_landuse_met_no_satellite": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.16564577835127914,
+            "rmse": 23.954045027002778,
+            "mae": 16.188064512963514,
+            "mbe": -0.21248907878717554,
+            "pearson_r": 0.42489479340139574
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.1576684904462119,
+            "rmse": 14.892135506640143,
+            "mae": 11.281414286831506,
+            "mbe": -0.42906248019429577,
+            "pearson_r": 0.45363241877749816
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.13477012995574722,
+            "rmse": 19.539157293509223,
+            "mae": 12.485225679934324,
+            "mbe": 2.805239577954486e-16,
+            "pearson_r": 0.3741133291646945
+          },
+          "median_within_station_r": 0.42091045418631545,
+          "n_stations": 212,
+          "selectable": false
+        },
+        "xgb_full": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.18024645781247184,
+            "rmse": 23.743529551979986,
+            "mae": 15.943726243857695,
+            "mbe": -0.1959042019823432,
+            "pearson_r": 0.4450653770338371
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.19924169104540346,
+            "rmse": 14.519985502233498,
+            "mae": 11.00007637443979,
+            "mbe": -0.47212878836014777,
+            "pearson_r": 0.4897301750590936
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.13540397566155837,
+            "rmse": 19.531999033949422,
+            "mae": 12.497788119401413,
+            "mbe": 2.8309757208714995e-17,
+            "pearson_r": 0.3822017021690383
+          },
+          "median_within_station_r": 0.42277533732540806,
+          "n_stations": 212,
+          "selectable": true,
+          "acceptance": {
+            "min_r2": 0.6,
+            "max_rmse_ugm3": 15.0,
+            "passed": false
+          }
+        },
+        "two_scale": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.07605560298906744,
+            "rmse": 25.207312519699027,
+            "mae": 16.813875687828585,
+            "mbe": -3.5387985873899224,
+            "pearson_r": 0.3226345189089303
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": -0.02270018864008394,
+            "rmse": 16.409283711051195,
+            "mae": 12.260357717205618,
+            "mbe": -3.7769929034958363,
+            "pearson_r": 0.2703532141637757
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.11617109422863525,
+            "rmse": 19.74804815681602,
+            "mae": 12.871567484348013,
+            "mbe": 3.9633660092201e-16,
+            "pearson_r": 0.34527017770167395
+          },
+          "median_within_station_r": 0.35783479740296387,
+          "n_stations": 212,
+          "selectable": true
+        }
+      }
+    },
+    "unseen_cities": {
+      "design": "leave-one-city-out over 115 cities",
+      "candidates": {
+        "linear_satellite": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.043342665562571825,
+            "rmse": 25.649672861707916,
+            "mae": 16.976059125304907,
+            "mbe": -4.0053762199215255,
+            "pearson_r": 0.2596481179667242
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.009185706498293977,
+            "rmse": 16.15145260723097,
+            "mae": 11.848282977849676,
+            "mbe": -4.249139426536157,
+            "pearson_r": 0.28625672731598395
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.05151783410181965,
+            "rmse": 20.457599008971908,
+            "mae": 13.247289676107517,
+            "mbe": -1.41548786043575e-16,
+            "pearson_r": 0.24068070526138885
+          },
+          "median_within_station_r": 0.21502575064294635,
+          "n_stations": 212,
+          "selectable": true
+        },
+        "xgb_landuse_met_no_satellite": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.21628727311730678,
+            "rmse": 23.215715736254445,
+            "mae": 15.870715458013828,
+            "mbe": 0.7039148403379326,
+            "pearson_r": 0.4687674077050913
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.24257856712744952,
+            "rmse": 14.12161122520818,
+            "mae": 10.975121221073557,
+            "mbe": 0.41127820873598275,
+            "pearson_r": 0.5130919257594616
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.17121632830878486,
+            "rmse": 19.123204536185806,
+            "mae": 12.182739747990821,
+            "mbe": 1.0809180025145727e-16,
+            "pearson_r": 0.4137880391386238
+          },
+          "median_within_station_r": 0.4822307513842793,
+          "n_stations": 212,
+          "selectable": false
+        },
+        "xgb_full": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.22998648530758714,
+            "rmse": 23.01191713805099,
+            "mae": 15.591743057781015,
+            "mbe": 0.5343925736265893,
+            "pearson_r": 0.4837066051062311
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.2510799837174339,
+            "rmse": 14.042135999108426,
+            "mae": 10.758172862814824,
+            "mbe": 0.1385983328323574,
+            "pearson_r": 0.5224771883741495
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.18053532691089802,
+            "rmse": 19.015388158424063,
+            "mae": 12.056590923370843,
+            "mbe": 2.5736142917013637e-18,
+            "pearson_r": 0.4251119754896146
+          },
+          "median_within_station_r": 0.49214695566367517,
+          "n_stations": 212,
+          "selectable": true,
+          "acceptance": {
+            "min_r2": 0.6,
+            "max_rmse_ugm3": 15.0,
+            "passed": false
+          }
+        },
+        "two_scale": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.16142926155722792,
+            "rmse": 24.01449617861673,
+            "mae": 16.028264571754463,
+            "mbe": -1.9418015503158144,
+            "pearson_r": 0.4089285921862285
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.08216560117299399,
+            "rmse": 15.545246785406302,
+            "mae": 11.670112788663676,
+            "mbe": -1.8407882577639865,
+            "pearson_r": 0.3255161729622745
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.19013602922487238,
+            "rmse": 18.903669523184764,
+            "mae": 12.007440364399358,
+            "mbe": 4.632505725062454e-17,
+            "pearson_r": 0.43604593474483816
+          },
+          "median_within_station_r": 0.5059915695025317,
+          "n_stations": 212,
+          "selectable": true
+        }
+      }
+    },
+    "unseen_years": {
+      "design": "leave-one-year-out",
+      "candidates": {
+        "linear_satellite": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.051151854871858804,
+            "rmse": 25.54476926182907,
+            "mae": 16.943281133389046,
+            "mbe": -3.759197181102544,
+            "pearson_r": 0.26965148191536964
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.0476752209624175,
+            "rmse": 15.834632854227246,
+            "mae": 11.587243544092376,
+            "mbe": -4.141811628914334,
+            "pearson_r": 0.35687141356177593
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.03572316500626571,
+            "rmse": 20.627231556951884,
+            "mae": 13.442794977088129,
+            "mbe": 2.7022950062864315e-16,
+            "pearson_r": 0.22091361588742867
+          },
+          "median_within_station_r": 0.19736608500379998,
+          "n_stations": 212,
+          "selectable": true
+        },
+        "xgb_landuse_met_no_satellite": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.3386320097272475,
+            "rmse": 21.326776295193525,
+            "mae": 13.713021418755355,
+            "mbe": -0.8976767211133201,
+            "pearson_r": 0.5829286739883643
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.7084598376009605,
+            "rmse": 8.761221324359871,
+            "mae": 6.352137687065094,
+            "mbe": -0.8624833012194029,
+            "pearson_r": 0.85258629248412
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.08524410300763607,
+            "rmse": 20.090589773806496,
+            "mae": 12.665768593384206,
+            "mbe": 2.110363719195118e-16,
+            "pearson_r": 0.32185254879784525
+          },
+          "median_within_station_r": 0.391951810756331,
+          "n_stations": 212,
+          "selectable": false
+        },
+        "xgb_full": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.35424098225260703,
+            "rmse": 21.073606556378383,
+            "mae": 13.450441786959312,
+            "mbe": -0.9772876922446944,
+            "pearson_r": 0.596360180994171
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.7159192587901526,
+            "rmse": 8.648411628956904,
+            "mae": 6.251811120413921,
+            "mbe": -0.9898819652517561,
+            "pearson_r": 0.8568884458120082
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.1037731099706094,
+            "rmse": 19.886074501101845,
+            "mae": 12.467423961880085,
+            "mbe": 2.908184149622541e-16,
+            "pearson_r": 0.34865846055438887
+          },
+          "median_within_station_r": 0.42410651618137796,
+          "n_stations": 212,
+          "selectable": true,
+          "acceptance": {
+            "min_r2": 0.6,
+            "max_rmse_ugm3": 15.0,
+            "passed": false
+          }
+        },
+        "two_scale": {
+          "overall": {
+            "n": 44174,
+            "r2": 0.1642583238374694,
+            "rmse": 23.973953443452555,
+            "mae": 15.940689848316492,
+            "mbe": -2.133333361157921,
+            "pearson_r": 0.4133828836848034
+          },
+          "station_mean_spatial": {
+            "n": 212,
+            "r2": 0.13131876214219962,
+            "rmse": 15.123268983820315,
+            "mae": 11.375917205515382,
+            "mbe": -2.2558710316147685,
+            "pearson_r": 0.39088472059885504
+          },
+          "temporal_anomaly": {
+            "n": 44174,
+            "r2": 0.16734075441255258,
+            "rmse": 19.16786453264749,
+            "mae": 12.253532401052222,
+            "mbe": 1.6471131466888727e-16,
+            "pearson_r": 0.4091502006807424
+          },
+          "median_within_station_r": 0.4750543873024202,
+          "n_stations": 212,
+          "selectable": true
+        }
+      }
+    }
+  },
+  "selected": "xgb_full",
+  "feature_importance": {
+    "column": 0.1815083920955658,
+    "tp": 0.10521543025970459,
+    "pbl_conc": 0.10192211717367172,
+    "night_lights_s6": 0.05681832507252693,
+    "night_lights": 0.051837220788002014,
+    "ghsl_built_s6": 0.04186251014471054,
+    "night_lights_s2": 0.03586685284972191,
+    "ghsl_built": 0.035405538976192474,
+    "population_s6": 0.033749353140592575,
+    "road_density_s2": 0.033398907631635666,
+    "ghsl_built_s2": 0.0301272701472044,
+    "elevation": 0.0289995688945055,
+    "road_density_s6": 0.027842985466122627,
+    "population_s2": 0.027490554377436638,
+    "sp": 0.02630332112312317,
+    "co": 0.02608458325266838,
+    "population": 0.020174149423837662,
+    "power_plants": 0.019593337550759315,
+    "sshf": 0.015819471329450607,
+    "road_density": 0.0147392051294446,
+    "t2m": 0.014699322171509266,
+    "ssrd": 0.013508521020412445,
+    "wind_speed": 0.013400464318692684,
+    "pbl_conc_anom": 0.010968952439725399,
+    "v10": 0.010105660185217857,
+    "blh": 0.009510532021522522,
+    "u10": 0.00708913104608655,
+    "day_of_week": 0.0059583731926977634,
+    "weekend": 0.0,
+    "sat_imputed": 0.0
+  },
+  "station_qc": {
+    "rows_in": 47667,
+    "frozen_rows_removed": 2120,
+    "rows_out": 44629,
+    "stations_in": 231,
+    "stations_out": 214,
+    "network_median_ugm3": 24.508484848484848,
+    "dropped_stations": {
+      "OPENAQ_10630_35350": "only 1 valid days",
+      "OPENAQ_10725_35757": "only 5 valid days",
+      "OPENAQ_10747_36149": "only 12 valid days",
+      "OPENAQ_10825_36178": "only 12 valid days",
+      "OPENAQ_10900_36535": "only 2 valid days",
+      "OPENAQ_10908_36560": "only 8 valid days",
+      "OPENAQ_10915_36643": "only 11 valid days",
+      "OPENAQ_6920_19868": "only 2 valid days",
+      "OPENAQ_7494_21738": "only 8 valid days",
+      "OPENAQ_7880_22851": "only 5 valid days",
+      "OPENAQ_10895_36679": "implausibly low (median 2.6 vs network 24.5)",
+      "OPENAQ_5664_15242": "implausibly low (median 1.5 vs network 24.5)",
+      "OPENAQ_6442_18099": "implausibly low (median 6.0 vs network 24.5)",
+      "OPENAQ_6952_20000": "implausibly low (median 6.1 vs network 24.5)",
+      "OPENAQ_6965_20081": "implausibly low (median 4.7 vs network 24.5)",
+      "OPENAQ_6971_20117": "inconsistent with OPENAQ_10905_36577 0.0 km away (median 6.3 vs 20.3)",
+      "OPENAQ_5634_14980": "inconsistent with OPENAQ_6957_20017 1.4 km away (median 18.3 vs 59.3)"
+    },
+    "satellite_gapfill": {
+      "clear_station_days": 200339,
+      "imputed_station_days": 114135,
+      "holdout_clear_values": {
+        "n": 20033,
+        "r2": 0.8543779955309515,
+        "rmse": 29.63708007763365,
+        "mae": 13.679755333894674,
+        "mbe": 0.2322485748507865,
+        "pearson_r": 0.9245276715728302
+      },
+      "importance": {
+        "neigh_col": 0.3737888085055826,
+        "lag1": 0.2759390785927533,
+        "clim_col": 0.1528490735592099,
+        "u10": 0.02992555269408911,
+        "v10": 0.020599697899603305,
+        "lag2": 0.020416200955030023,
+        "nat_col": 0.016830298901314062,
+        "sp": 0.016769881183092437,
+        "blh": 0.015129248851253519,
+        "lat": 0.014992982894119019,
+        "t2m": 0.01452328794049123,
+        "lon": 0.01430432392655418,
+        "ssrd": 0.01237582053326304,
+        "doy_cos": 0.008369909398004523,
+        "doy_sin": 0.007338104623495159,
+        "tp": 0.0058477295421447304
+      }
+    }
+  }
+}

@@ -2,6 +2,18 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 
+def fake_forecast(lat, lon, hours, **kwargs):
+    """Stand-in for ml_engine.service.forecast_point (no Earth Engine in unit tests)."""
+    return {
+        "lat": lat, "lon": lon, "hours": hours, "base_date": "2024-01-15", "current_no2": 55.0,
+        "predictions": [
+            {"hour": h, "no2_concentration": 50.0 - h * 0.5, "wind_speed": 3.2,
+             "wind_direction": 250.0, "confidence": 0.5}
+            for h in range(3, hours + 1, 3)
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v1/trends/predict — happy path (hours=6)
 # ---------------------------------------------------------------------------
@@ -14,10 +26,11 @@ async def test_predict_success(auth_client):
 
     with patch("app.services.activity_service.log_activity"):
         with patch("app.api.v1.trends.router.get_supabase", return_value=mock_supabase):
-            response = await auth_client.get(
-                "/api/v1/trends/predict",
-                params={"lat": 19.07, "lon": 72.87, "hours": 6},
-            )
+            with patch("app.services.trends_service.forecast_point", side_effect=fake_forecast):
+                response = await auth_client.get(
+                    "/api/v1/trends/predict",
+                    params={"lat": 19.07, "lon": 72.87, "hours": 6},
+                )
 
     assert response.status_code == 200
     data = response.json()
@@ -47,10 +60,11 @@ async def test_predict_24_hours(auth_client):
 
     with patch("app.services.activity_service.log_activity"):
         with patch("app.api.v1.trends.router.get_supabase", return_value=mock_supabase):
-            response = await auth_client.get(
-                "/api/v1/trends/predict",
-                params={"lat": 28.61, "lon": 77.20, "hours": 24},
-            )
+            with patch("app.services.trends_service.forecast_point", side_effect=fake_forecast):
+                response = await auth_client.get(
+                    "/api/v1/trends/predict",
+                    params={"lat": 28.61, "lon": 77.20, "hours": 24},
+                )
 
     assert response.status_code == 200
     assert len(response.json()["predictions"]) == 8

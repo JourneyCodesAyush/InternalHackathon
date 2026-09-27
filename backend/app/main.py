@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from ml_engine.service import RUNS_ROOT
 
 from app.api.v1.router import v1_router
 
@@ -25,6 +28,9 @@ app.add_middleware(
 )
 
 app.include_router(v1_router, prefix="/api/v1")
+
+# GeoTIFF / GeoJSON / NetCDF files produced by the ML engine, referenced by the downscale endpoint.
+app.mount("/files", StaticFiles(directory=RUNS_ROOT, check_dir=False), name="ml-files")
 
 
 @app.get("/health", summary="Health check", tags=["system"])
