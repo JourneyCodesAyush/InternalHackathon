@@ -1,28 +1,21 @@
 'use client';
-import { setWorkerUrl } from 'maplibre-gl'
-import * as maplibregl from 'maplibre-gl'
+
+import { Map, setWorkerUrl, type CustomRenderMethodInput } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 setWorkerUrl('/maplibre/maplibre-gl-worker.mjs')
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { Deck } from '@deck.gl/core'
+import type { Layer } from '@deck.gl/core'
+import type { BitmapLayer } from '@deck.gl/layers'
 
-// Fix for Turbopack: maplibre-gl's worker cannot be inlined as a blob under
-// Turbopack's module system. We copy the pre-built worker to /public so
-// Next.js serves it as a static file, then point maplibre at it here.
-if (typeof window !== 'undefined') {
-  maplibregl.setWorkerUrl('/maplibre-gl-worker.mjs');
-}
-import { Deck } from '@deck.gl/core';
-import type { Layer } from '@deck.gl/core';
-import type { BitmapLayer } from '@deck.gl/layers';
-
-import { useFrameInterpolation, type FrameState } from './useFrameInterpolation';
-import GeoTiffLayer, { type BandData } from './GeoTiffLayer';
-import WindParticleLayer from './WindParticleLayer';
-import TimeSlider from './TimeSlider';
-import ColorLegend from './ColorLegend';
-import LayerToggle from './LayerToggle';
+import { useFrameInterpolation, type FrameState } from './useFrameInterpolation'
+import GeoTiffLayer, { type BandData } from './GeoTiffLayer'
+import WindParticleLayer from './WindParticleLayer'
+import TimeSlider from './TimeSlider'
+import ColorLegend from './ColorLegend'
+import LayerToggle from './LayerToggle'
 
 const API_BASE = 'http://localhost:8000';
 const MAP_CENTER: [number, number] = [72.85, 19.05]; // Mumbai
@@ -39,7 +32,7 @@ function getAuthHeaders(): Record<string, string> | null {
 export default function MapContainer() {
   // ── DOM refs ──────────────────────────────────────────────────────────────
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
+  const mapRef = useRef<Map | null>(null);
   const deckRef = useRef<Deck | null>(null);
 
   // Current Deck.gl layers to render — kept in a ref so the map's custom-layer
@@ -159,7 +152,7 @@ export default function MapContainer() {
   useEffect(() => {
     if (!containerRef.current || mapReady) return;
 
-    const map = new maplibregl.Map({
+    const map = new Map({
       container: containerRef.current,
       style: 'https://tiles.openfreemap.org/styles/liberty',
       center: MAP_CENTER,
@@ -176,7 +169,7 @@ export default function MapContainer() {
         type: 'custom',
         renderingMode: '2d',
 
-        onAdd(_map: maplibregl.Map, gl: WebGLRenderingContext) {
+        onAdd(_map: Map, gl: WebGLRenderingContext) {
           const deck = new Deck({
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             gl: gl as any,
@@ -194,7 +187,7 @@ export default function MapContainer() {
           deckRef.current = deck;
         },
 
-        render(_gl: WebGLRenderingContext, _options: maplibregl.CustomRenderMethodInput) {
+        render(_gl: WebGLRenderingContext, _options: CustomRenderMethodInput) {
           const deck = deckRef.current;
           const map_ = mapRef.current;
           if (!deck || !map_) return;
