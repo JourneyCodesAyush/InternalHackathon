@@ -56,9 +56,9 @@ export default function Sidebar({
           </div>
           <div>
             <div className="font-semibold text-sm tracking-wide text-zinc-100 flex items-center gap-1.5">
-              AEROPULSE
-              <span className="text-[10px] uppercase font-mono px-1 py-0.2 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded">
-                v2.4
+              AirQ Insight
+              <span className="text-[10px] uppercase font-mono px-1 py-0.2 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded font-semibold">
+                GEO-INTEL
               </span>
             </div>
             <div className="text-[11px] text-zinc-400 leading-tight">

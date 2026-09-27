@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import Sidebar from '../components/Sidebar';
 import FileUploader from '../components/FileUploader';
 import UploadQueue from '../components/UploadQueue';
 import { UploadedSatelliteFile } from '@/lib/types';
-import { ShieldCheck, Zap, Sparkles, FolderArchive } from 'lucide-react';
+import { ShieldCheck, Zap, Sparkles, FolderArchive, Loader2, AlertCircle } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
 
 const INITIAL_MOCK_FILES: UploadedSatelliteFile[] = [
   {
@@ -47,8 +49,49 @@ const INITIAL_MOCK_FILES: UploadedSatelliteFile[] = [
 ];
 
 export default function UploadPage() {
+  const router = useRouter();
+  const { isAuthenticated, isLoading, isBlocked, blockedMessage } = useAuth();
+
   const [files, setFiles] = useState<UploadedSatelliteFile[]>(INITIAL_MOCK_FILES);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      router.push('/login?redirect=/upload');
+    }
+  }, [isLoading, isAuthenticated, router]);
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-[#0d0f15]">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+          <span className="text-xs text-zinc-400">Authenticating session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Blocked account state
+  if (isBlocked) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-[#0d0f15] p-4">
+        <div className="max-w-md p-6 rounded-xl bg-red-950/40 border border-red-500/40 text-center">
+          <AlertCircle className="w-10 h-10 text-red-400 mx-auto mb-3" />
+          <h2 className="text-base font-semibold text-white mb-1">Access Restricted</h2>
+          <p className="text-xs text-red-200">
+            {blockedMessage || 'Your account has been blocked. Please contact the administrator.'}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Redirecting state
+  if (!isAuthenticated) {
+    return null;
+  }
 
   // Handle newly selected or dropped files / folders
   const handleFilesSelected = (newFiles: File[]) => {
@@ -139,7 +182,7 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#0d0f15]">
+    <div className="flex h-full w-full overflow-hidden bg-[#0d0f15]">
       {/* Shared Navigation Sidebar */}
       <Sidebar />
 
