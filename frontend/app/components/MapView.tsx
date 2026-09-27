@@ -16,6 +16,7 @@ interface MapViewProps {
   selectedCoords?: [number, number] | null;
   onMapClick: (coords: [number, number]) => void;
   timeOffsetHours?: number;
+  mapTypeId?: 'roadmap' | 'satellite' | 'hybrid' | 'terrain';
 }
 
 export default function MapView(props: MapViewProps) {

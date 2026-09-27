@@ -26,7 +26,8 @@ from .validation import acceptance, regression_metrics, sample_at_stations, summ
 log = logging.getLogger(__name__)
 
 SURFACE_MODEL_FILE = "surface_model.joblib"
-GEE_CACHE_VERSION = 5  # bump when the set of ingested layers changes
+GEE_CACHE_VERSION = 5
+FINE_TARGET_RES_DEG = 0.0025  # ~270 m output cells for file inputs of any coarse resolution  # bump when the set of ingested layers changes
 
 
 @dataclass
@@ -50,7 +51,7 @@ class NO2Pipeline:
 
     # ---------------------------------------------------------------- ingestion
     def ingest(self, source: str, stations_csv: str | None = None, roads_geojson: str | None = None,
-               ee_project: str | None = None, seed: int = 0):
+               ee_project: str | None = None, seed: int = 0, input_dir: str | None = None):
         truth = None
         self.station_qc = None
         stations = None
@@ -65,6 +66,8 @@ class NO2Pipeline:
 
                 coarse, static, syn_stations, truth = synthetic.generate(self.cfg, self.coarse_grid, self.fine_grid, seed)
                 stations = stations if stations is not None else syn_stations
+            elif source == "files":
+                coarse, static = self._load_files(input_dir, ee_project)
             elif source == "gee":
                 coarse, static = self._load_gee_cached(ee_project)
                 if not roads_geojson and self.cfg.fetch_osm_roads:
@@ -77,6 +80,28 @@ class NO2Pipeline:
                 static["road_density"] = (("y", "x"), road_density_from_geojson(roads_geojson, self.fine_grid))
         log.info("Ingested %d days on coarse grid %s and fine grid %s", coarse.sizes["time"], self.coarse_grid.shape, self.fine_grid.shape)
         return coarse, static, stations, truth
+
+    def _load_files(self, input_dir: str | None, ee_project: str | None) -> tuple[xr.Dataset, xr.Dataset]:
+        """Satellite NO2 from local daily GeoTIFFs; the area, dates and coarse grid come from the files.
+        Weather and land use are fetched from Earth Engine for that area and period."""
+        from .ingestion import gee
+        from .ingestion.files import load_no2_geotiffs
+
+        if not input_dir:
+            raise ValueError("--source files needs --input-dir")
+        dates, no2, coarse = load_no2_geotiffs(input_dir)
+        cfg = self.cfg
+        cfg.refine_factor = max(1, round(coarse.res / FINE_TARGET_RES_DEG))
+        cfg.coarse_res_deg = coarse.res
+        cfg.bbox = coarse.bbox
+        cfg.start_date, cfg.end_date = str(dates[0].date()), str(dates[-1].date())
+        self.coarse_grid, self.fine_grid = coarse, coarse.refine(cfg.refine_factor)
+        log.info("Loaded %d days of NO2 GeoTIFFs (%s..%s) on a %s grid; %.0f%% cloudy pixels",
+                 len(dates), cfg.start_date, cfg.end_date, coarse.shape, 100 * np.isnan(no2).mean())
+        gee.initialize(project=ee_project)
+        coarse_ds, static = gee.load_gee(cfg, self.coarse_grid, self.fine_grid, no2=no2)
+        coarse_ds.attrs["source"] = "files"
+        return coarse_ds, static
 
     def _load_gee_cached(self, ee_project: str | None) -> tuple[xr.Dataset, xr.Dataset]:
         """Earth Engine download, cached on disk per (AOI, period, grid, screening) so reruns are instant."""
@@ -100,12 +125,13 @@ class NO2Pipeline:
 
     # ---------------------------------------------------------------- full run
     def run(self, source: str = "synthetic", stations_csv: str | None = None, roads_geojson: str | None = None,
-            ee_project: str | None = None, seed: int = 0, export_outputs: bool = True) -> PipelineResult:
+            ee_project: str | None = None, seed: int = 0, export_outputs: bool = True,
+            input_dir: str | None = None) -> PipelineResult:
         cfg = self.cfg
         out_dir = Path(cfg.output_dir)
         if export_outputs:
             out_dir.mkdir(parents=True, exist_ok=True)
-        coarse, static, stations, truth = self.ingest(source, stations_csv, roads_geojson, ee_project, seed)
+        coarse, static, stations, truth = self.ingest(source, stations_csv, roads_geojson, ee_project, seed, input_dir)
         report: dict = {
             "source": source,
             "config": cfg.to_dict(),

@@ -36,6 +36,12 @@ uv run python -m ml_engine --source gee --city Pune --start 2025-11-01 --end 202
 uv run python -m ml_engine --source gee --city Mumbai --start 2025-11-01 --end 2025-12-31 --stations data/cpcb_mumbai.csv
 ```
 
+```bash
+# your own satellite GeoTIFFs instead of the Earth Engine download (sample folder included)
+uv run python -m ml_engine --source files --input-dir data/sample_inputs/mumbai_2025-11-24_to_2025-12-07
+```
+
+`data/sample_inputs/README.md` describes the sample files and the format your own GeoTIFFs need.
 `uv run python -m ml_engine --list-cities` prints the ~280 supported city names (bounding boxes come from
 CPCB station locations; `--bbox WEST SOUTH EAST NORTH` works anywhere in India).
 
