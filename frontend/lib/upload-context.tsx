@@ -38,9 +38,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring saved state on mount
           setFiles(
             parsed
-              // drop placeholders and "completed" rows from the old simulated pipeline (no model job behind them)
               .filter((f: ExtendedUploadedFile) => !f.id.startsWith('demo-file-'))
-              .filter((f: ExtendedUploadedFile) => f.status !== 'COMPLETED' || Boolean(f.jobId))
               .map((f: ExtendedUploadedFile) =>
                 f.status === 'COMPLETED' || f.status === 'FAILED'
                   ? f

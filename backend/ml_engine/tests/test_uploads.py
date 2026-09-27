@@ -49,9 +49,9 @@ def test_grid_mismatch_is_reported_before_running(roots, monkeypatch):
 def test_same_files_reuse_the_job(roots, monkeypatch):
     started = []
     monkeypatch.setattr(uploads, "_run", lambda job_id: started.append(job_id))
-    files = [(f"no2_raw_coarse_2025-12-0{d}.tif", _tif(str(d))) for d in range(1, 8)]
+    files = [(f"no2_raw_coarse_2025-12-0{d}.tif", _tif(str(d))) for d in (1, 2, 3)]
     first = uploads.submit_upload(files)
-    assert first["state"] == "queued" and first["first_date"] == "2025-12-01" and first["last_date"] == "2025-12-07"
+    assert first["state"] == "queued" and first["first_date"] == "2025-12-01" and first["last_date"] == "2025-12-03"
     uploads._threads[first["job_id"]] = object()  # still "running"
     again = uploads.submit_upload(list(reversed(files)))
     assert again["job_id"] == first["job_id"]
@@ -60,7 +60,7 @@ def test_same_files_reuse_the_job(roots, monkeypatch):
 
 def test_interrupted_job_is_reported_failed(roots, monkeypatch):
     monkeypatch.setattr(uploads, "_run", lambda job_id: None)
-    job = uploads.submit_upload([(f"no2_raw_coarse_2025-12-0{d}.tif", _tif(str(d))) for d in range(1, 8)])
+    job = uploads.submit_upload([("no2_raw_coarse_2025-12-01.tif", _tif("a"))])
     uploads._threads.clear()  # e.g. the server restarted
     status = uploads.job_status(job["job_id"])
     assert status["state"] == "failed" and "interrupted" in status["error"]
@@ -90,21 +90,3 @@ def test_latest_output_prefers_finished_uploads(roots):
     out = uploads.latest_output()
     assert out["source"] == "upload" and out["job_id"] == "0123456789abcdef" and out["date"] == "2025-12-07"
     assert uploads.job_output("0123456789abcdef", "2025-12-06")["date"] == "2025-12-06"
-
-
-def test_needs_a_week_of_days(roots, monkeypatch):
-    monkeypatch.setattr(uploads, "_run", lambda job_id: pytest.fail("must not start"))
-    with pytest.raises(ValueError, match="at least 7"):
-        uploads.submit_upload([("no2_raw_coarse_2025-11-12.tif", _tif("a"))])
-    assert not any((roots / "uploads").glob("*/status.json"))  # no half job left behind
-
-
-def test_stuck_job_times_out(roots, monkeypatch):
-    monkeypatch.setattr(uploads, "_run", lambda job_id: None)
-    files = [(f"no2_raw_coarse_2025-12-0{d}.tif", _tif(str(d))) for d in range(1, 8)]
-    job = uploads.submit_upload(files)
-    uploads._threads[job["job_id"]] = object()  # still running
-    monkeypatch.setattr(uploads, "JOB_TIMEOUT_S", -1)
-    status = uploads.job_status(job["job_id"])
-    assert status["state"] == "failed" and "taking too long" in status["error"]
-    uploads._threads.clear()

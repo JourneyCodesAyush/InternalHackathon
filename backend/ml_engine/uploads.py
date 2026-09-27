@@ -30,8 +30,6 @@ log = logging.getLogger(__name__)
 UPLOADS_ROOT = Path(setting("ML_ENGINE_UPLOADS_DIR", "outputs/uploads"))
 MAX_FILES = 400
 MAX_FILE_BYTES = 50 * 1024 * 1024
-MIN_DAYS = 7  # gap-filling and downscaling learn from the other days of the series
-JOB_TIMEOUT_S = 30 * 60  # a run still going after this is reported as failed (e.g. Earth Engine throttled)
 TIFF_SUFFIXES = (".tif", ".tiff")
 
 # Stage shown while a job runs, from the module that is logging (real pipeline progress, not a timer)
@@ -77,18 +75,7 @@ def job_status(job_id: str) -> dict:
     # a job left "running" by a restarted server is not running any more
     if status.get("state") in ("queued", "running") and job_id not in _threads:
         status = _write_status(job_id, state="failed", error="Processing was interrupted (server restarted); upload again.")
-    elif status.get("state") in ("queued", "running") and _age_s(status.get("created_at")) > JOB_TIMEOUT_S:
-        status = _write_status(job_id, state="failed", error=(
-            f"No result after {JOB_TIMEOUT_S // 60} minutes: {status.get('stage', 'processing')} is taking too long "
-            "(Earth Engine may be throttled by its usage quota). Try again later."))
     return status
-
-
-def _age_s(iso: str | None) -> float:
-    if not iso:
-        return 0.0
-    started = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - started).total_seconds()
 
 
 class _StageHandler(logging.Handler):
@@ -214,18 +201,7 @@ def submit_upload(files: list[tuple[str, bytes]]) -> dict:
         # check the files before starting (grid, CRS, dates) so format errors come back immediately
         from .ingestion.files import load_no2_geotiffs
 
-        try:
-            dates, stack, grid = load_no2_geotiffs(job / "input")
-            observed = int(np.isfinite(stack).any(axis=(1, 2)).sum())
-            if observed < MIN_DAYS:
-                raise ValueError(f"Only {observed} day(s) with data; upload at least {MIN_DAYS} daily files of the same "
-                                 "area (a folder of consecutive days) - the model learns cloud filling and downscaling "
-                                 "from the other days of the series.")
-        except Exception:
-            import shutil
-
-            shutil.rmtree(job, ignore_errors=True)  # nothing was started: do not leave a half job behind
-            raise
+        dates, _, grid = load_no2_geotiffs(job / "input")
         status = _write_status(job_id, state="queued", stage="Queued", progress=2, error=None, stats=None,
                                files=len(files), created_at=_now(), first_date=str(dates[0].date()),
                                last_date=str(dates[-1].date()))

@@ -69,7 +69,7 @@ export default function StatusBadge({ type = 'hazard', value, size = 'sm' }: Sta
       return (
         <span className={`inline-flex items-center gap-1.5 font-medium rounded border border-blue-500/30 bg-blue-500/10 text-blue-400 ${sizeClasses}`}>
           <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-          Processing
+          Uploading
         </span>
       );
     case 'CLEANING_MODEL':

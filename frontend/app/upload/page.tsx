@@ -10,8 +10,6 @@ import { ShieldCheck, Zap, Sparkles, FolderArchive } from 'lucide-react';
 import { useUploadContext } from '@/lib/upload-context';
 import { getJob, uploadFiles, type JobStatus } from '@/lib/modelOutput';
 
-const MIN_DAYS = 7; // matches the backend: the model trains on the other days of the series
-
 export default function UploadPage() {
   const router = useRouter();
   const {
@@ -24,7 +22,6 @@ export default function UploadPage() {
     setFolderName,
   } = useUploadContext();
   const [isProcessing, setIsProcessing] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
 
   // Handle newly selected or dropped files / folders
   const handleFilesSelected = (newFiles: File[]) => {
@@ -43,12 +40,7 @@ export default function UploadPage() {
       }
     }
 
-    // the model reads daily GeoTIFFs only (folder uploads can bring along READMEs, previews, etc.)
-    const tiffs = newFiles.filter((f) => /\.tiff?$/i.test(f.name));
-    const skipped = newFiles.length - tiffs.length;
-    setNotice(skipped ? `Skipped ${skipped} file${skipped > 1 ? 's' : ''} that ${skipped > 1 ? 'are' : 'is'} not a GeoTIFF (.tif).` : null);
-
-    const formatted = tiffs.map((file, idx) => ({
+    const formatted = newFiles.map((file, idx) => ({
       id: `upload-${Date.now()}-${idx}-${Math.random().toString(36).substr(2, 4)}`,
       name: file.name,
       sizeBytes: file.size,
@@ -85,22 +77,6 @@ export default function UploadPage() {
       )
     );
     if (!ready.length) return;
-    const days = new Set(ready.map((f) => f.name.match(/\d{4}-?\d{2}-?\d{2}/)?.[0]).filter(Boolean));
-    if (days.size < MIN_DAYS) {
-      setFiles((prev) =>
-        prev.map((f) =>
-          ids.has(f.id)
-            ? { ...f, status: 'QUEUED', progressPercent: 0, stage: undefined }
-            : f
-        )
-      );
-      setNotice(
-        `Add at least ${MIN_DAYS} daily files of the same area (found ${days.size}): the model learns cloud filling and ` +
-          'downscaling from the other days of the series. Use "Upload Folder" for a folder of daily GeoTIFFs.'
-      );
-      return;
-    }
-    setNotice(null);
     setIsProcessing(true);
 
     const apply = (job: JobStatus) =>
@@ -134,7 +110,7 @@ export default function UploadPage() {
               },
             };
           }
-          const status = job.progress < 30 ? 'UPLOADING' : job.progress < 65 ? 'CLEANING_MODEL' : 'DOWNSCALING';
+          const status = job.progress < 40 ? 'UPLOADING' : job.progress < 65 ? 'CLEANING_MODEL' : 'DOWNSCALING';
           return { ...f, status, progressPercent: Math.max(3, job.progress), jobId: job.job_id, stage: job.stage };
         })
       );
@@ -230,10 +206,6 @@ export default function UploadPage() {
           disabled={isProcessing}
           folderName={folderName}
         />
-
-        {notice && (
-          <div className="p-3 rounded border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200">{notice}</div>
-        )}
 
         {/* Upload & Processing Queue */}
         <UploadQueue
