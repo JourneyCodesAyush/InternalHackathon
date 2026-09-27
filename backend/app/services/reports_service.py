@@ -9,6 +9,7 @@ from supabase import Client
 
 from app.core.config import settings
 from app.services.activity_service import log_activity
+from ml_engine.report import analyse_area as build_analysis
 from ml_engine.report import generate_report as build_report
 
 
@@ -25,6 +26,38 @@ def _parse_bbox(bbox: str) -> List[float]:
 def _filename(region_name: str, date: str, language: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9]+", "_", region_name).strip("_")[:40] or "area"
     return f"no2_report_{slug}_{date}_{language}.pdf"
+
+
+async def _call_engine(fn, bbox: str, city: Optional[str], **kwargs):
+    """Run an ML engine report function off the event loop for a known city (falling back to the bbox for
+    an unknown name) and map engine errors to HTTP errors."""
+    parsed_bbox = tuple(_parse_bbox(bbox))
+    kwargs["ee_project"] = settings.EE_PROJECT
+    try:
+        try:
+            return await asyncio.to_thread(fn, **({"city": city} if city else {"bbox": parsed_bbox}), **kwargs)
+        except KeyError:  # unknown city name: fall back to the bounding box
+            return await asyncio.to_thread(fn, bbox=parsed_bbox, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:  # Earth Engine outage / quota, missing satellite data
+        raise HTTPException(status_code=503, detail=f"Report generation failed: {exc}") from exc
+
+
+async def analyse_area(
+    region_name: str,
+    bbox: str,
+    end_date: str,
+    language: str = "en",
+    city: Optional[str] = None,
+) -> dict:
+    """
+    The report's analysis as JSON for the web page: the area's NO2 on ``end_date`` against the CPCB NAAQS
+    and WHO standards, hotspots, population exposure, forecast alerts and the weather-adjusted trend.
+    Uses the same cached pipeline run as the PDF and never calls Gemini.
+    """
+    return await _call_engine(build_analysis, bbox, city, date=end_date[:10], area_name=region_name,
+                              language=language)
 
 
 async def generate_report(
@@ -57,22 +90,10 @@ async def generate_report(
         use_ai: Whether to try the Gemini narrative.
         city: Optional known city name; overrides bbox.
     """
-    parsed_bbox = _parse_bbox(bbox)
-    kwargs = {"city": city} if city else {"bbox": tuple(parsed_bbox)}
-    try:
-        pdf_bytes, meta = await asyncio.to_thread(
-            build_report, date=end_date[:10], area_name=region_name, language=language, use_ai=use_ai,
-            ee_project=settings.EE_PROJECT, gemini_api_key=settings.GEMINI_API_KEY, **kwargs,
-        )
-    except KeyError:  # unknown city name: fall back to the bounding box
-        pdf_bytes, meta = await asyncio.to_thread(
-            build_report, bbox=tuple(parsed_bbox), date=end_date[:10], area_name=region_name, language=language,
-            use_ai=use_ai, ee_project=settings.EE_PROJECT, gemini_api_key=settings.GEMINI_API_KEY,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    except Exception as exc:  # Earth Engine outage / quota, missing satellite data
-        raise HTTPException(status_code=503, detail=f"Report generation failed: {exc}") from exc
+    pdf_bytes, meta = await _call_engine(
+        build_report, bbox, city, date=end_date[:10], area_name=region_name, language=language, use_ai=use_ai,
+        gemini_api_key=settings.GEMINI_API_KEY,
+    )
 
     await log_activity(
         supabase,
@@ -90,5 +111,6 @@ async def generate_report(
             "X-Report-Status": meta["status"],
             "X-Report-Narrative": meta["narrative"],
             "X-Report-Language": meta["language"],
+            "X-Report-Notice": meta.get("notice") or "",
         },
     )

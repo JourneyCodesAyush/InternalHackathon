@@ -9,7 +9,9 @@ these facts; it never produces numbers.
 from __future__ import annotations
 
 import json
+import logging
 import math
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +25,8 @@ from ..dispersion import AdvectionDiffusionSolver
 from ..export import HAZARD_BANDS
 from ..grid import GridSpec, upsample_bilinear
 
+log = logging.getLogger(__name__)
+
 NAAQS_24H = 80.0  # CPCB National Ambient Air Quality Standard, NO2 24-hour mean (ug/m3)
 NAAQS_ANNUAL = 40.0  # CPCB NAAQS, NO2 annual mean (ug/m3)
 WHO_24H = 25.0  # WHO 2021 air quality guideline, NO2 24-hour mean (ug/m3)
@@ -34,6 +38,7 @@ HOTSPOT_SMOOTH_PX = 2.0
 HOTSPOT_SEPARATION_PX = 10  # ~2.6 km between reported hotspots
 NEAR_STATION_KM = 6.0
 MIN_TREND_DAYS = 10
+FACTS_VERSION = 1  # bump when the facts change, to recompute cached analyses
 
 
 def classify_status(area_mean: float, share_above_standard: float) -> str:
@@ -263,9 +268,40 @@ def _pretrained_accuracy() -> dict:
         return {"unseen_city_r2": None, "rmse": None}
 
 
+NO_FORECAST = {"wind_speed": None, "wind_from_deg": None, "wind_compass": None, "horizons": [], "alerts": []}
+
+
+def _section(name: str, fn, default):
+    """One optional report section; a failure leaves it out instead of failing the whole report."""
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 - any failure in an optional section
+        log.exception("Report section %r failed; leaving it out", name)
+        return default
+
+
 def analyse_run(run_dir: str | Path, date: str, area_name: str) -> dict:
-    """All report facts for ``date`` from one pipeline run directory."""
+    """All report facts for ``date`` from one pipeline run directory, cached in the run directory (the
+    24-hour dispersion forecast takes a few seconds; reports must come back within ~15 s)."""
     run_dir = Path(run_dir)
+    cache = run_dir / f"report_facts_v{FACTS_VERSION}_{pd.Timestamp(date).date()}.pkl"
+    facts = None
+    if cache.exists():
+        try:
+            facts = pickle.loads(cache.read_bytes())
+        except Exception:  # noqa: BLE001 - unreadable cache: recompute
+            log.warning("Ignoring unreadable facts cache %s", cache)
+    if facts is None:
+        facts = _compute_facts(run_dir, date)
+        try:
+            cache.write_bytes(pickle.dumps(facts))
+        except OSError:
+            log.warning("Could not write facts cache %s", cache)
+    facts["area"]["name"] = area_name
+    return facts
+
+
+def _compute_facts(run_dir: Path, date: str, area_name: str = "") -> dict:
     report, surface_all, coarse, static = _load_run(run_dir)
     grid = GridSpec(**report["grids"]["fine"])
     factor = int(report["config"]["refine_factor"])
@@ -285,11 +321,12 @@ def analyse_run(run_dir: str | Path, date: str, area_name: str) -> dict:
     r, c = np.unravel_index(int(np.nanargmax(surface)), surface.shape)
     window_mean = float(np.nanmean(surface_all.values))
     status = classify_status(area_mean, share_naaqs)
-    hotspots = _hotspots(surface, grid, static, stations)
+    hotspots = _section("hotspots", lambda: _hotspots(surface, grid, static, stations), [])
 
     coarse_day = coarse.isel(time=t)
-    forecast = _forecast(surface, grid, coarse_day, factor, share_naaqs, float(np.nanmax(surface)),
-                         hotspots[0]["near"] if hotspots else None)
+    forecast = _section("forecast", lambda: _forecast(surface, grid, coarse_day, factor, share_naaqs,
+                                                      float(np.nanmax(surface)), hotspots[0]["near"] if hotspots else None),
+                        dict(NO_FORECAST))
 
     daily_mean = np.array([float(np.nanmean(surface_all.isel(time=i).values)) for i in range(len(dates))])
     weather = {}
@@ -300,7 +337,7 @@ def analyse_run(run_dir: str | Path, date: str, area_name: str) -> dict:
     for name in ("t2m", "tp"):
         if name in coarse:
             weather[name] = coarse[name].mean(dim=("y", "x")).values.astype(np.float64)
-    trend = weather_adjusted_trend(dates, daily_mean, weather, t)
+    trend = _section("trend", lambda: weather_adjusted_trend(dates, daily_mean, weather, t), None)
 
     raw_no2 = coarse["no2"].isel(time=t).values if "no2" in coarse else None
     return {
@@ -326,7 +363,7 @@ def analyse_run(run_dir: str | Path, date: str, area_name: str) -> dict:
         "window_stats": {"mean": round(window_mean, 1),
                          "pct_vs_annual": round((window_mean - NAAQS_ANNUAL) / NAAQS_ANNUAL * 100, 1)},
         "hotspots": hotspots,
-        "population": _population(surface, grid, static),
+        "population": _section("population", lambda: _population(surface, grid, static), None),
         "forecast": forecast,
         "trend": trend,
         "model": {

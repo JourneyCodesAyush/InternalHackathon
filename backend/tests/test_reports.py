@@ -138,3 +138,62 @@ async def test_generate_report_invalid_bbox(auth_client):
             json={"region_name": "Test", "bbox": "73.0,18.85,72.7", "start_date": "2024-01-01", "end_date": "2024-01-31"},
         )
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/reports/analysis — JSON comparison for the web page
+# ---------------------------------------------------------------------------
+
+FAKE_ANALYSIS = {"date": "2024-01-17", "current": {"mean": 52.3, "status": "elevated"},
+                 "labels": {"status": "Elevated"}, "texts": {"summary": "..."}}
+
+
+@pytest.mark.asyncio
+async def test_analysis_success(auth_client):
+    """The analysis is returned as JSON, with the language passed through."""
+    with patch("app.services.reports_service.build_analysis", return_value=FAKE_ANALYSIS) as analyse:
+        response = await auth_client.post(
+            "/api/v1/reports/analysis",
+            json={"region_name": "Mumbai", "bbox": "72.7,18.85,73.0,19.3", "start_date": "2024-01-01",
+                  "end_date": "2024-01-17", "language": "mr", "city": "Mumbai"},
+        )
+    assert response.status_code == 200
+    assert response.json()["current"]["status"] == "elevated"
+    kwargs = analyse.call_args.kwargs
+    assert kwargs["city"] == "Mumbai" and kwargs["language"] == "mr" and kwargs["date"] == "2024-01-17"
+
+
+@pytest.mark.asyncio
+async def test_analysis_unknown_city_falls_back_to_bbox(auth_client):
+    """An unknown city name retries with the bounding box."""
+    with patch("app.services.reports_service.build_analysis", side_effect=[KeyError("x"), FAKE_ANALYSIS]) as analyse:
+        response = await auth_client.post(
+            "/api/v1/reports/analysis",
+            json={"region_name": "Somewhere", "bbox": "72.7,18.85,73.0,19.3", "start_date": "2024-01-01",
+                  "end_date": "2024-01-17", "city": "Somewhere"},
+        )
+    assert response.status_code == 200
+    assert analyse.call_args.kwargs["bbox"] == (72.7, 18.85, 73.0, 19.3)
+
+
+@pytest.mark.asyncio
+async def test_analysis_engine_failure(auth_client):
+    """An ML engine failure (e.g. Earth Engine quota) surfaces as 503."""
+    with patch("app.services.reports_service.build_analysis", side_effect=RuntimeError("quota")):
+        response = await auth_client.post(
+            "/api/v1/reports/analysis",
+            json={"region_name": "Test", "bbox": "72.7,18.85,73.0,19.3", "start_date": "2024-01-01",
+                  "end_date": "2024-01-31"},
+        )
+    assert response.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_analysis_unauthenticated(client):
+    """Unauthenticated request returns 401."""
+    response = await client.post(
+        "/api/v1/reports/analysis",
+        json={"region_name": "Test", "bbox": "72.7,18.85,73.0,19.3", "start_date": "2024-01-01",
+              "end_date": "2024-01-31"},
+    )
+    assert response.status_code == 401

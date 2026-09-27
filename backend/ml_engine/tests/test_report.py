@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from ml_engine import service
-from ml_engine.report import analysis, build_facts, generate_report, llm, texts
+from ml_engine.report import analyse_area, analysis, build_facts, generate_report, llm, public_facts, texts
 from ml_engine.report.pdf import build_pdf, resolve_fonts
 
 SMALL_BBOX = (72.80, 18.95, 72.975, 19.125)
@@ -98,14 +98,14 @@ def _gemini_payload(obj):
 def isolated_llm(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "CACHE_DIR", tmp_path)
     monkeypatch.setattr(llm, "MIN_INTERVAL_S", 0.0)
-    monkeypatch.setattr(llm, "_setting", lambda name, default=None: {"GEMINI_API_KEY": "test-key"}.get(name, default))
+    monkeypatch.setattr(llm, "setting", lambda name, default=None: {"GEMINI_API_KEY": "test-key"}.get(name, default))
     calls = []
     return calls
 
 
 def test_no_key_means_no_call(facts, monkeypatch, tmp_path):
     monkeypatch.setattr(llm, "CACHE_DIR", tmp_path)
-    monkeypatch.setattr(llm, "_setting", lambda name, default=None: default)
+    monkeypatch.setattr(llm, "setting", lambda name, default=None: default)
     monkeypatch.setattr(llm.httpx, "post", lambda *a, **k: pytest.fail("no HTTP call expected without a key"))
     assert llm.generate_narrative(facts, "en") is None
 
@@ -167,3 +167,93 @@ def test_generate_report_end_to_end(runs_root, monkeypatch, tmp_path):
     assert meta["narrative"] == "template" and meta["language"] == "en" and meta["date"] == "2025-11-20"
     with pytest.raises(ValueError):
         generate_report(bbox=SMALL_BBOX, date="2025-11-20", language="fr", source="synthetic")
+
+
+def test_public_facts_are_json_with_plain_texts(facts):
+    out = public_facts(facts, "mr")
+    text = json.dumps(out, ensure_ascii=False)
+    assert "surface_map" not in out and "grid" not in out and "<sub>" not in text
+    assert out["labels"]["status"] == texts.STATUS["mr"][facts["current"]["status"]]
+    assert len(out["labels"]["hotspot_sources"]) == len(facts["hotspots"])
+    assert out["texts"]["summary"] and out["texts"]["forecast"] and out["texts"]["recommendations"]
+
+
+def test_analyse_area_matches_report_facts(runs_root):
+    out = analyse_area(bbox=SMALL_BBOX, date="2025-11-20", area_name="Test area", language="hi", source="synthetic")
+    assert out["date"] == "2025-11-20" and out["language"] == "hi"
+    with pytest.raises(ValueError):
+        analyse_area(bbox=SMALL_BBOX, date="2025-11-20", language="fr", source="synthetic")
+
+
+def test_dates_without_weather_move_back():
+    assert service._parse_date("2099-01-01") == service.latest_date()
+    assert service._parse_date(None) == service.latest_date()
+    assert service._parse_date("2025-11-20") == pd.Timestamp("2025-11-20")
+
+
+# ------------------------------------------------------------------------------------------------ fallbacks
+def _fail_run(*args, **kwargs):
+    raise RuntimeError("Earth Engine quota exceeded")
+
+
+def test_failed_run_falls_back_to_stored_map(runs_root, facts, monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(service, "_run", _fail_run)
+    pdf, meta = generate_report(bbox=SMALL_BBOX, date="2025-11-25", area_name="Test area", use_ai=False,
+                                source="synthetic")
+    assert pdf[:4] == b"%PDF"
+    assert meta["notice"] == "cached" and meta["date"] == "2025-11-20" and meta["status"] != "unavailable"
+    out = analyse_area(bbox=SMALL_BBOX, date="2025-11-25", area_name="Test area", source="synthetic")
+    assert out["notice"]["reason"] == "quota" and "usage limit" in out["texts"]["notice"]
+
+
+def test_no_stored_map_still_gives_a_document(runs_root, monkeypatch, tmp_path):
+    monkeypatch.setattr(service, "_run", _fail_run)
+    far_away = (88.0, 22.0, 88.2, 22.2)
+    for lang in ("en", "hi"):
+        pdf, meta = generate_report(bbox=far_away, date="2025-11-20", language=lang, use_ai=False, source="synthetic")
+        assert pdf[:4] == b"%PDF" and meta["status"] == "unavailable" and meta["notice"] == "unavailable"
+    with pytest.raises(RuntimeError):
+        analyse_area(bbox=far_away, date="2025-11-20", source="synthetic")
+
+
+def test_failed_section_is_left_out(runs_root, monkeypatch, tmp_path):
+    monkeypatch.setattr(llm, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(analysis, "_forecast", _fail_run)
+    monkeypatch.setattr(analysis, "weather_adjusted_trend", _fail_run)
+    for cached in runs_root.glob("*/report_facts_*.pkl"):  # recompute instead of reusing earlier analyses
+        cached.unlink()
+    pdf, meta = generate_report(bbox=SMALL_BBOX, date="2025-11-20", use_ai=False, source="synthetic")
+    assert pdf[:4] == b"%PDF" and meta["notice"] is None
+    out = analyse_area(bbox=SMALL_BBOX, date="2025-11-20", language="mr", source="synthetic")
+    assert out["forecast"]["alerts"] == [] and out["trend"] is None
+    assert out["texts"]["forecast"] == [texts.T["mr"]["no_forecast"]]
+
+
+def test_narrative_failure_uses_templates(runs_root, monkeypatch, tmp_path):
+    from ml_engine import report as report_pkg
+
+    monkeypatch.setattr(report_pkg, "generate_narrative", _fail_run)
+    pdf, meta = generate_report(bbox=SMALL_BBOX, date="2025-11-20", use_ai=True, source="synthetic")
+    assert pdf[:4] == b"%PDF" and meta["narrative"] == "template"
+
+
+def test_slow_run_falls_back_within_the_time_budget(runs_root, facts, monkeypatch, tmp_path):
+    import time as time_mod
+
+    from ml_engine import report as report_pkg
+
+    monkeypatch.setattr(llm, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(report_pkg, "RUN_WAIT_S", 0.5)
+    monkeypatch.setattr(service, "_run", lambda *a, **k: time_mod.sleep(3))
+    started = time_mod.monotonic()
+    pdf, meta = generate_report(bbox=SMALL_BBOX, date="2025-11-25", use_ai=False, source="synthetic")
+    assert time_mod.monotonic() - started < 3
+    assert pdf[:4] == b"%PDF" and meta["notice"] == "cached"
+
+
+def test_facts_are_cached_per_run_and_date(runs_root, monkeypatch):
+    build_facts(bbox=SMALL_BBOX, date="2025-11-20", area_name="First", source="synthetic")
+    monkeypatch.setattr(analysis, "_compute_facts", _fail_run)  # must not be needed a second time
+    again = build_facts(bbox=SMALL_BBOX, date="2025-11-20", area_name="Second name", source="synthetic")
+    assert again["area"]["name"] == "Second name"

@@ -23,6 +23,7 @@ import pandas as pd
 import xarray as xr
 
 from ..config import COLUMN_SCALE, PipelineConfig
+from ..env import setting
 from ..grid import GridSpec, fill_nan_nearest
 
 log = logging.getLogger(__name__)
@@ -83,6 +84,10 @@ def initialize(project: str | None = None, service_account: str | None = None, k
     # antivirus) whose root CA is trusted by Windows/macOS but absent from certifi still work.
     truststore.inject_into_ssl()
 
+    project = project or setting("EE_PROJECT")
+    if not project:
+        raise RuntimeError("No Earth Engine project configured: set EE_PROJECT in backend/.env "
+                           "(or pass --ee-project)")
     if service_account and key_file:
         credentials = ee.ServiceAccountCredentials(service_account, key_file)
         ee.Initialize(credentials, project=project)

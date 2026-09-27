@@ -145,7 +145,18 @@ pdf_bytes, meta = generate_report(city="Mumbai", date="2025-12-31", language="hi
 
 API: `POST /api/v1/reports/generate` with `region_name, bbox, start_date, end_date, language (en|hi|mr),
 use_ai, city` streams the PDF; headers `X-Report-Status`, `X-Report-Narrative` (ai/template),
-`X-Report-Language`. The frontend's **Area Air Quality Report** card (sidebar) calls it.
+`X-Report-Language`, `X-Report-Notice` (empty/cached/unavailable). `POST /api/v1/reports/analysis` (same body)
+returns the same analysis as JSON (no Gemini call); the frontend's **Area Air Quality Report** card (sidebar)
+shows it on screen (**Analyse**) and downloads the PDF (**PDF report**).
+
+**A report is always produced.** If the fresh run fails (Earth Engine quota, not configured, outage) or takes
+longer than `REPORT_RUN_WAIT_S` (default 5 s; the run then continues in the background and is cached), the
+report uses the latest stored model map covering the area and says so in a notice. With no stored map, the
+PDF gives the standards, hazard bands and health guidance. A section that fails on its own (forecast, trend,
+hotspots, population, map figure) is left out, and a Gemini failure falls back to the templates.
+Reports come back within `REPORT_TIME_BUDGET_S` (default 15 s): analyses are cached per run and date, and
+Gemini only gets the time left (else templates). Dates later than today − 6 days are moved back to that day
+(ERA5-Land weather is published ~6 days late).
 
 **Gemini (optional):** set `GEMINI_API_KEY` in `backend/.env` (free key from Google AI Studio). One call per
 report, cached on disk (`cache/report_llm/`), at most `GEMINI_DAILY_LIMIT` calls a day (default 40), a

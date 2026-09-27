@@ -61,6 +61,15 @@ T = {
         "narrative_ai": "Narrative sections: AI summary (Gemini). All numbers are computed by the model, not by the AI.",
         "narrative_template": "Narrative sections: standard template. All numbers are computed by the model.",
         "lang_fallback": "Hindi and Marathi reports need a Devanagari font on the server; this report is in English.",
+        "h_notice": "Data notice",
+        "notice_cached": "New satellite data for {requested} could not be processed ({reason}). This report uses the "
+                         "model's most recent map for this area, for {used}.",
+        "notice_unavailable": "The model could not produce a map for this area on {requested} ({reason}), and no earlier "
+                              "map of the area is stored. This document gives the reference standards and health "
+                              "guidance; generate the report again later for measured values.",
+        "h_standards": "Reference Standards",
+        "no_forecast": "The forecast could not be computed for this day.",
+        "no_map": "The map image could not be drawn for this day.",
         "page": "Page",
     },
     "hi": {
@@ -96,6 +105,15 @@ T = {
         "no_trend": "मौसम और उत्सर्जन के प्रभाव को अलग करने के लिए विश्लेषण अवधि में पर्याप्त दिन नहीं हैं।",
         "narrative_ai": "विवरण खंड: AI सारांश (Gemini)। सभी आँकड़े मॉडल द्वारा गणना किए गए हैं, AI द्वारा नहीं।",
         "narrative_template": "विवरण खंड: मानक टेम्पलेट। सभी आँकड़े मॉडल द्वारा गणना किए गए हैं।",
+        "h_notice": "डेटा सूचना",
+        "notice_cached": "{requested} का नया उपग्रह डेटा संसाधित नहीं हो सका ({reason})। यह रिपोर्ट इस क्षेत्र के लिए "
+                         "मॉडल के सबसे हाल के मानचित्र ({used}) पर आधारित है।",
+        "notice_unavailable": "मॉडल {requested} के लिए इस क्षेत्र का मानचित्र नहीं बना सका ({reason}), और इस क्षेत्र का कोई "
+                              "पुराना मानचित्र संग्रहीत नहीं है। इस दस्तावेज़ में संदर्भ मानक और स्वास्थ्य मार्गदर्शन दिए गए हैं; "
+                              "मापे गए मानों के लिए बाद में रिपोर्ट फिर से बनाएँ।",
+        "h_standards": "संदर्भ मानक",
+        "no_forecast": "इस दिन के लिए पूर्वानुमान की गणना नहीं हो सकी।",
+        "no_map": "इस दिन का मानचित्र चित्र नहीं बन सका।",
         "lang_fallback": "",
         "page": "पृष्ठ",
     },
@@ -132,6 +150,15 @@ T = {
         "no_trend": "हवामान आणि उत्सर्जनाचा परिणाम वेगळा करण्यासाठी विश्लेषण कालावधीत पुरेसे दिवस नाहीत.",
         "narrative_ai": "वर्णनात्मक विभाग: AI सारांश (Gemini). सर्व आकडे मॉडेलने मोजले आहेत, AI ने नाहीत.",
         "narrative_template": "वर्णनात्मक विभाग: मानक साचा. सर्व आकडे मॉडेलने मोजले आहेत.",
+        "h_notice": "डेटा सूचना",
+        "notice_cached": "{requested} चा नवीन उपग्रह डेटा प्रक्रिया करता आला नाही ({reason}). हा अहवाल या क्षेत्रासाठी "
+                         "मॉडेलच्या सर्वात अलीकडील नकाशावर ({used}) आधारित आहे.",
+        "notice_unavailable": "मॉडेल {requested} साठी या क्षेत्राचा नकाशा तयार करू शकले नाही ({reason}), आणि या क्षेत्राचा "
+                              "कोणताही जुना नकाशा साठवलेला नाही. या दस्तऐवजात संदर्भ मानके आणि आरोग्य मार्गदर्शन दिले आहे; "
+                              "मोजलेल्या मूल्यांसाठी नंतर अहवाल पुन्हा तयार करा.",
+        "h_standards": "संदर्भ मानके",
+        "no_forecast": "या दिवसासाठी अंदाज मोजता आला नाही.",
+        "no_map": "या दिवसाचा नकाशा काढता आला नाही.",
         "lang_fallback": "",
         "page": "पान",
     },
@@ -436,10 +463,13 @@ def trend_texts(facts: dict, lang: str) -> list[str]:
 
 def forecast_texts(facts: dict, lang: str) -> list[str]:
     fc = facts["forecast"]
+    if not fc["alerts"]:
+        return [T[lang]["no_forecast"]]
     lines = [FORECAST[lang][a["code"]].format(no2=NO2, ug=UG, h=a["hours"], share=pct(a["share"]),
                                                place=a.get("place") or facts["current"]["max_near"])
              for a in fc["alerts"]]
-    lines.append(FORECAST[lang]["wind"].format(speed=f"{fc['wind_speed']:.1f}", dir=COMPASS[lang][fc["wind_compass"]]))
+    if fc["wind_speed"] is not None:
+        lines.append(FORECAST[lang]["wind"].format(speed=f"{fc['wind_speed']:.1f}", dir=COMPASS[lang][fc["wind_compass"]]))
     return lines
 
 
@@ -454,6 +484,30 @@ def recommendations(facts: dict, lang: str) -> list[str]:
         if a["code"] == "exceedance_expected":
             items.insert(0, RECOMMENDATIONS[lang]["forecast"].format(h=a["hours"]))
     return items
+
+
+REASON = {
+    "en": {"processing": "new satellite data is still being processed; it continues in the background",
+           "quota": "satellite data service usage limit reached", "config": "satellite data service not configured",
+           "network": "satellite data service could not be reached",
+           "no_data": "no satellite data available for these dates", "error": "processing error"},
+    "hi": {"processing": "नया उपग्रह डेटा अभी संसाधित हो रहा है; यह पृष्ठभूमि में जारी है",
+           "quota": "उपग्रह डेटा सेवा की उपयोग सीमा पूरी हो गई", "config": "उपग्रह डेटा सेवा कॉन्फ़िगर नहीं है",
+           "network": "उपग्रह डेटा सेवा से संपर्क नहीं हो सका",
+           "no_data": "इन तिथियों के लिए उपग्रह डेटा उपलब्ध नहीं है", "error": "प्रसंस्करण त्रुटि"},
+    "mr": {"processing": "नवीन उपग्रह डेटावर अजून प्रक्रिया सुरू आहे; ती पार्श्वभूमीत चालू राहील",
+           "quota": "उपग्रह डेटा सेवेची वापर मर्यादा संपली", "config": "उपग्रह डेटा सेवा कॉन्फिगर केलेली नाही",
+           "network": "उपग्रह डेटा सेवेशी संपर्क होऊ शकला नाही",
+           "no_data": "या तारखांसाठी उपग्रह डेटा उपलब्ध नाही", "error": "प्रक्रिया त्रुटी"},
+}
+
+
+def notice_text(notice: dict, lang: str) -> str:
+    """Why a report uses an older map, or has no map at all."""
+    key = "notice_cached" if notice["code"] == "cached" else "notice_unavailable"
+    used = fmt_date(notice["used_date"], lang) if notice.get("used_date") else ""
+    reason = REASON[lang].get(notice["reason"], REASON[lang]["error"])
+    return T[lang][key].format(requested=fmt_date(notice["requested_date"], lang), used=used, reason=reason)
 
 
 def method_text(facts: dict, lang: str) -> str:

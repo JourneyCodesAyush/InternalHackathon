@@ -10,6 +10,7 @@ common system fonts (Windows Nirmala UI, Noto Sans Devanagari, Lohit Devanagari)
 from __future__ import annotations
 
 import io
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,8 @@ MUTED = colors.HexColor("#5b6675")
 ACCENT = colors.HexColor("#1f4e79")
 RULE = colors.HexColor("#d5dbe3")
 ZEBRA = colors.HexColor("#f4f6f9")
+log = logging.getLogger(__name__)
+NOTICE_FILL, NOTICE_EDGE = "#fff4e0", "#ef6c00"
 STATUS_COLOURS = {"normal": "#2e7d32", "elevated": "#f9a825", "critical": "#ef6c00", "critical_spike": "#c62828"}
 BAND_COLOURS = {"normal": "#2e7d32", "moderate": "#f9a825", "unhealthy": "#ef6c00", "hazardous": "#c62828"}
 # Continuous map colours anchored on the SRS band edges (ug/m3).
@@ -200,6 +203,51 @@ def _table(rows: list[list], styles: dict, widths: list[float], header: bool = T
     return tbl
 
 
+def _notice_box(text: str, title: str, st: dict, page_w: float) -> Table:
+    box = Table([[Paragraph(f"<b>{escape(title)}</b>", st["cell"])], [Paragraph(escape(text), st["body"])]],
+                colWidths=[page_w])
+    box.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(NOTICE_FILL)),
+                             ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(NOTICE_EDGE)),
+                             ("LEFTPADDING", (0, 0), (-1, -1), 10), ("TOPPADDING", (0, 0), (-1, -1), 4),
+                             ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    return box
+
+
+def build_unavailable_pdf(area_name: str, date: str, lang: str, notice: dict) -> bytes:
+    """The fallback document when no model map exists: standards, hazard bands and health guidance."""
+    regular, bold, deva = resolve_fonts()
+    if lang != "en" and not deva:
+        lang = "en"
+    st = _styles(regular, bold, shaping=deva)
+    L = tx.T[lang]
+    buf = io.BytesIO()
+    page_w = A4[0] - 3.6 * cm
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.8 * cm, rightMargin=1.8 * cm, topMargin=1.6 * cm,
+                            bottomMargin=2.0 * cm, title=f"NO2 report {area_name} {date}")
+    meta = Table([[Paragraph(f"<b>{L['area']}:</b> {escape(area_name)}", st["cell"]),
+                   Paragraph(f"<b>{L['report_date']}:</b> {tx.fmt_date(date, lang)}", st["cell"])],
+                  [Paragraph(f"<b>{L['generated']}:</b> {generated}", st["cell"]), ""]], colWidths=[page_w / 2] * 2)
+    story = [Paragraph(L["title"], st["title"]), Paragraph(L["subtitle"], st["subtitle"]), Spacer(1, 8), meta,
+             Spacer(1, 8), _notice_box(tx.notice_text(notice, lang), L["h_notice"], st, page_w)]
+    rows = [[L["metric"], L["standard"]],
+            ["CPCB NAAQS, 24 h", f"{NAAQS_24H:.0f} {tx.UG}"],
+            ["CPCB NAAQS, annual", f"{NAAQS_ANNUAL:.0f} {tx.UG}"],
+            ["WHO 2021 guideline, 24 h", f"{WHO_24H:.0f} {tx.UG}"]]
+    story += [Paragraph(L["h_standards"], st["h2"]), _table(rows, st, [page_w * 0.6, page_w * 0.4])]
+    band_rows = [["", L["band"], L["range"], L["advice"]]]
+    ranges = {"normal": "0–40", "moderate": "40–80", "unhealthy": "80–180", "hazardous": "> 180"}
+    for code in (1, 2, 3, 4):
+        k = BAND_KEYS[code]
+        band_rows.append(["", tx.BAND[lang][k], ranges[k], tx.BAND_ADVICE[lang][k]])
+    band_tbl = _table(band_rows, st, [page_w * 0.03, page_w * 0.2, page_w * 0.15, page_w * 0.62])
+    band_tbl.setStyle(TableStyle([("BACKGROUND", (0, i), (0, i), colors.HexColor(BAND_COLOURS[BAND_KEYS[i]]))
+                                  for i in (1, 2, 3, 4)]))
+    story += [Spacer(1, 6), band_tbl]
+    doc.build(story)
+    return buf.getvalue()
+
+
 def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback: bool = False) -> bytes:
     regular, bold, deva = resolve_fonts()
     st = _styles(regular, bold, shaping=deva)
@@ -238,6 +286,8 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
                                ("LEFTPADDING", (0, 0), (-1, -1), 10), ("TOPPADDING", (0, 0), (-1, -1), 5),
                                ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
     story += [badge, Spacer(1, 8)]
+    if facts.get("notice"):
+        story += [_notice_box(tx.notice_text(facts["notice"], lang), L["h_notice"], st, page_w), Spacer(1, 8)]
 
     sign = "+" if cur["pct_vs_naaqs"] > 0 else ""
     kpis = [(f"{cur['mean']:.0f} {tx.UG}", L["kpi_mean"]), (f"{sign}{cur['pct_vs_naaqs']:.0f}%", L["kpi_vs"]),
@@ -274,20 +324,24 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
                                   for i in (1, 2, 3, 4)]))
     story += [Spacer(1, 6), band_tbl]
 
-    grid = facts["grid"]
-    img_buf = map_image(facts["surface_map"], facts["hotspots"], grid, water=facts.get("water_mask"))
-    aspect = facts["surface_map"].shape[0] / facts["surface_map"].shape[1]
-    map_w = min(page_w * 0.62, 11 * cm / aspect)
-    hot_rows = [[L["hotspot"], L["location"], L["value"], L["sources"]]]
-    for h in facts["hotspots"]:
-        hot_rows.append([str(h["rank"]), f"{escape(h['near'])}<br/><font size='7.5' color='#5b6675'>{h['lat']:.3f}°N, "
-                                         f"{h['lon']:.3f}°E</font>",
-                         f"{h['value']:.0f} ({tx.BAND[lang][h['band']]})", ", ".join(tx.SOURCE[lang][s] for s in h["sources"])])
-    story += [Paragraph(L["h_map"], st["h2"]),
-              KeepTogether([RLImage(img_buf, width=map_w, height=map_w * aspect), _legend(map_w),
-                            Paragraph(L["map_caption"].format(no2=tx.NO2, ug=tx.UG, date=tx.fmt_date(facts["date"], lang),
-                                                              max=f"{cur['max']:.0f}", near=escape(cur["max_near"])), st["small"])]),
-              Spacer(1, 6), _table(hot_rows, st, [page_w * 0.06, page_w * 0.36, page_w * 0.24, page_w * 0.34])]
+    try:
+        grid = facts["grid"]
+        img_buf = map_image(facts["surface_map"], facts["hotspots"], grid, water=facts.get("water_mask"))
+        aspect = facts["surface_map"].shape[0] / facts["surface_map"].shape[1]
+        map_w = min(page_w * 0.62, 11 * cm / aspect)
+        hot_rows = [[L["hotspot"], L["location"], L["value"], L["sources"]]]
+        for h in facts["hotspots"]:
+            hot_rows.append([str(h["rank"]), f"{escape(h['near'])}<br/><font size='7.5' color='#5b6675'>{h['lat']:.3f}°N, "
+                                             f"{h['lon']:.3f}°E</font>",
+                             f"{h['value']:.0f} ({tx.BAND[lang][h['band']]})", ", ".join(tx.SOURCE[lang][s] for s in h["sources"])])
+        story += [Paragraph(L["h_map"], st["h2"]),
+                  KeepTogether([RLImage(img_buf, width=map_w, height=map_w * aspect), _legend(map_w),
+                                Paragraph(L["map_caption"].format(no2=tx.NO2, ug=tx.UG, date=tx.fmt_date(facts["date"], lang),
+                                                                  max=f"{cur['max']:.0f}", near=escape(cur["max_near"])), st["small"])]),
+                  Spacer(1, 6), _table(hot_rows, st, [page_w * 0.06, page_w * 0.36, page_w * 0.24, page_w * 0.34])]
+    except Exception:  # noqa: BLE001 - the rest of the report is still useful without the figure
+        log.exception("Map figure failed")
+        story += [Paragraph(L["h_map"], st["h2"]), Paragraph(L["no_map"], st["body"])]
 
     story += [Paragraph(L["h_exposure"], st["h2"])]
     story += [Paragraph(tx.population_text(facts, lang), st["body"])] if pop else [Paragraph(L["no_population"], st["body"])]
@@ -304,7 +358,9 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
     for i, a in enumerate(fc["alerts"] + [None]):
         alert_style.append(("BACKGROUND", (0, i), (0, i), colors.HexColor(level_colour.get(a["level"], "#5b6675") if a else "#9aa5b1")))
     alert_tbl.setStyle(TableStyle(alert_style))
-    story += [alert_tbl, Spacer(1, 6), _table(fc_rows, st, [page_w * 0.22, page_w * 0.26, page_w * 0.26, page_w * 0.26])]
+    story += [alert_tbl, Spacer(1, 6)]
+    if fc["horizons"]:
+        story += [_table(fc_rows, st, [page_w * 0.22, page_w * 0.26, page_w * 0.26, page_w * 0.26])]
 
     story += [Paragraph(L["h_trend"], st["h2"])]
     if facts.get("trend"):

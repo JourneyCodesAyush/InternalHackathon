@@ -23,6 +23,7 @@ from pathlib import Path
 
 import httpx
 
+from ..env import setting
 from .texts import LANGUAGES, fmt_date, fmt_people
 
 log = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ DEFAULT_DAILY_LIMIT = 40
 MIN_INTERVAL_S = 5.0  # between calls, well under free-tier per-minute limits
 COOLDOWN_S = 120.0  # after a 429/quota error, don't call again for a while
 TIMEOUT_S = 30.0
+MIN_CALL_S = 3.0  # skip the call when less time than this is left in the caller's budget
 CACHE_DIR = Path(os.environ.get("ML_ENGINE_LLM_CACHE", "cache/report_llm"))
 _lock = threading.Lock()
 
@@ -47,18 +49,6 @@ SCHEMA = {
 }
 LIMITS = {"executive_summary": 1200, "risk_context": 1000, "recommendation": 240}
 DEVANAGARI_DIGITS = str.maketrans("०१२३४५६७८९", "0123456789")
-
-
-def _setting(name: str, default: str | None = None) -> str | None:
-    value = os.environ.get(name)
-    if value:
-        return value
-    env_file = Path(__file__).resolve().parents[2] / ".env"
-    if env_file.exists():
-        from dotenv import dotenv_values
-
-        value = dotenv_values(env_file).get(name)
-    return value or default
 
 
 def compact_facts(facts: dict, lang: str = "en") -> dict:
@@ -139,7 +129,7 @@ def _usage_path() -> Path:
     return CACHE_DIR / "_usage.json"
 
 
-def _check_budget(daily_limit: int) -> bool:
+def _check_budget(daily_limit: int, time_left: float | None = None) -> bool:
     try:
         usage = json.loads(_usage_path().read_text())
     except (OSError, ValueError):
@@ -151,7 +141,10 @@ def _check_budget(daily_limit: int) -> bool:
     if usage.get("day") == str(date.today()) and usage.get("count", 0) >= daily_limit:
         log.warning("Gemini daily limit (%d) reached; using template text", daily_limit)
         return False
-    wait = MIN_INTERVAL_S - (now - usage.get("last_call", 0))
+    wait = max(0.0, MIN_INTERVAL_S - (now - usage.get("last_call", 0)))
+    if time_left is not None and wait + MIN_CALL_S > time_left:
+        log.info("Not enough time left for a Gemini call; using template text")
+        return False
     if wait > 0:
         time.sleep(wait)
     return True
@@ -173,14 +166,16 @@ def _record_call(cooldown: bool = False) -> None:
     _usage_path().write_text(json.dumps(usage))
 
 
-def generate_narrative(facts: dict, lang: str, api_key: str | None = None) -> dict | None:
+def generate_narrative(facts: dict, lang: str, api_key: str | None = None,
+                       deadline: float | None = None) -> dict | None:
     """AI-written narrative parts, or ``None`` when AI is unavailable. Parts failing the fact check are
-    dropped individually (the caller uses the template for any missing part)."""
-    api_key = api_key or _setting("GEMINI_API_KEY")
+    dropped individually (the caller uses the template for any missing part). ``deadline`` (a
+    ``time.monotonic()`` value) caps the waiting and the request, so the report stays within its time budget."""
+    api_key = api_key or setting("GEMINI_API_KEY")
     if not api_key:
         return None
-    model = _setting("GEMINI_MODEL", DEFAULT_MODEL)
-    daily_limit = int(_setting("GEMINI_DAILY_LIMIT", str(DEFAULT_DAILY_LIMIT)))
+    model = setting("GEMINI_MODEL", DEFAULT_MODEL)
+    daily_limit = int(setting("GEMINI_DAILY_LIMIT", str(DEFAULT_DAILY_LIMIT)))
     cf = compact_facts(facts, lang)
     key = hashlib.sha1(json.dumps([cf, lang, model], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
     cache_file = CACHE_DIR / f"{key}.json"
@@ -188,8 +183,10 @@ def generate_narrative(facts: dict, lang: str, api_key: str | None = None) -> di
         if cache_file.exists():
             log.info("Gemini narrative from cache (%s)", cache_file.name)
             return json.loads(cache_file.read_text(encoding="utf-8"))
-        if not _check_budget(daily_limit):
+        time_left = None if deadline is None else deadline - time.monotonic()
+        if not _check_budget(daily_limit, time_left):
             return None
+        timeout = TIMEOUT_S if deadline is None else max(1.0, min(TIMEOUT_S, deadline - time.monotonic()))
         system, user = _prompt(cf, lang)
         body = {
             "systemInstruction": {"parts": [{"text": system}]},
@@ -201,7 +198,7 @@ def generate_narrative(facts: dict, lang: str, api_key: str | None = None) -> di
             import truststore
 
             truststore.inject_into_ssl()
-            resp = httpx.post(API_URL.format(model=model), json=body, timeout=TIMEOUT_S,
+            resp = httpx.post(API_URL.format(model=model), json=body, timeout=timeout,
                               headers={"x-goog-api-key": api_key, "Content-Type": "application/json"})
         except Exception as exc:  # network error / timeout
             log.warning("Gemini request failed (%s); using template text", exc)
