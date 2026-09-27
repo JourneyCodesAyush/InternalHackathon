@@ -18,10 +18,12 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from .. import service
 from ..cities import city_bbox
 from ..env import offline, setting
-from .analysis import analyse_run
+from . import sources
+from .analysis import NAAQS_24H, NAAQS_ANNUAL, WHO_24H, analyse_run, band_key, classify_status
 from .llm import generate_narrative
-from .pdf import build_pdf, build_unavailable_pdf, resolve_fonts
-from .texts import (BAND, LANGUAGES, SOURCE, STATUS, forecast_texts, notice_text, recommendations, summary_text,
+from .pdf import build_pdf, build_point_pdf, build_unavailable_pdf, resolve_fonts
+from .texts import (BAND, LANGUAGES, RECOMMENDATIONS, SOURCE, STATUS, forecast_texts, notice_text, point_summary,
+                    recommendations, source_text, summary_text,
                     trend_texts)
 
 log = logging.getLogger(__name__)
@@ -109,11 +111,17 @@ def generate_report(bbox=None, date=None, city=None, area_name=None, language="e
     started = time.monotonic()
     facts, notice = gather_facts(bbox=bbox, date=date, city=city, area_name=area_name, ee_project=ee_project,
                                  source=source)
+    return _render(facts, notice, area_name or city or "Selected area", language, use_ai, gemini_api_key, started)
+
+
+def _render(facts: dict | None, notice: dict | None, name: str, language: str, use_ai: bool,
+            gemini_api_key: str | None, started: float) -> tuple[bytes, dict]:
+    """PDF for ``facts`` (or the standards document when None), with every fallback: Gemini -> templates,
+    layout failure in Hindi/Marathi -> English, any other failure -> standards document."""
     used_language, fallback = language, False
     if language != "en" and not resolve_fonts()[2]:
         log.warning("No Devanagari font found; producing the report in English")
         used_language, fallback = "en", True
-    name = area_name or city or "Selected area"
     meta = {"status": "unavailable", "area_mean": None, "date": notice["requested_date"] if notice else None,
             "language": used_language, "narrative": "template", "narrative_model": None,
             "notice": notice["code"] if notice else None}
@@ -143,6 +151,126 @@ def generate_report(bbox=None, date=None, city=None, area_name=None, language="e
             meta.update(status="unavailable", area_mean=None, notice="unavailable")
     meta.update(narrative="ai" if narrative else "template", narrative_model=(narrative or {}).get("model"))
     return pdf, meta
+
+
+def _model_source(run) -> dict:
+    days = sources._days(run.run_dir)
+    return {"kind": run.kind, "job_id": run.job_id, "days": len(days), "first_date": days[0], "last_date": days[-1]}
+
+
+def _sample(facts: dict, lat: float, lon: float) -> float | None:
+    """The model's ground-level value in the 250 m cell containing the point."""
+    grid, surface = facts["grid"], facts["surface_map"]
+    j, i = int((grid.north - lat) / grid.res), int((lon - grid.west) / grid.res)
+    if 0 <= j < surface.shape[0] and 0 <= i < surface.shape[1] and surface[j, i] == surface[j, i]:
+        return round(float(surface[j, i]), 1)
+    return None
+
+
+def _map_area_name(run_dir, point_name: str) -> str:
+    """The model map covers a city region, not just the selected point: name it after the nearest CPCB city."""
+    bbox = sources._fine_bbox(run_dir)
+    try:
+        from ..cities import city_table
+
+        cities = city_table()
+        clat, clon = (bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2
+        d2 = (cities["lat"] - clat) ** 2 + (cities["lon"] - clon) ** 2
+        city = str(cities.loc[d2.idxmin(), "city"]) if float(d2.min()) < 1.0 else None
+    except Exception:  # noqa: BLE001 - naming is cosmetic
+        city = None
+    if not city:
+        return point_name
+    return f"{city} region" if city.lower() in point_name.lower() else f"{city} region ({point_name})"
+
+
+def _point_facts(lat: float, lon: float, name: str, google: dict) -> dict:
+    value = google["no2_ugm3"]
+    day = (google.get("date_time") or "")[:10] or time.strftime("%Y-%m-%d", time.gmtime())
+    return {
+        "kind": "point", "area": {"name": name, "centre": [round(lat, 4), round(lon, 4)]}, "date": day,
+        "value": value, "status": classify_status(value, 1.0 if value > NAAQS_24H else 0.0), "band": band_key(value),
+        "data_source": {"kind": "google", "lat": lat, "lon": lon, "time": (google.get("date_time") or "")[:16].replace("T", " "),
+                        "raw_value": google["raw_value"], "raw_units": google["raw_units"]},
+    }
+
+
+def agent_facts(lat: float, lon: float, date: str | None, area_name: str | None) -> tuple[dict | None, dict | None, dict | None]:
+    """``(facts, point_facts, notice)`` for the agent: the AI model's output covering the point (the map's data),
+    else the Google Air Quality value at the point, else neither (``notice`` says why)."""
+    name = area_name or "Selected area"
+    run = sources.find_model_run(lat, lon, date)
+    if run is not None:
+        try:
+            facts = analyse_run(run.run_dir, run.date, _map_area_name(run.run_dir, name))
+            facts["data_source"] = _model_source(run)
+            facts["point"] = {"name": name, "lat": round(lat, 4), "lon": round(lon, 4),
+                              "value": _sample(facts, lat, lon)}
+            return facts, None, None
+        except Exception:  # noqa: BLE001 - try the next source
+            log.exception("Model output %s could not be analysed", run.run_dir)
+    try:
+        return None, _point_facts(lat, lon, name, sources.google_point(lat, lon)), None
+    except Exception as exc:  # noqa: BLE001
+        log.warning("No model output covers %.3f, %.3f and Google Air Quality failed: %s", lat, lon, exc)
+    requested = date or time.strftime("%Y-%m-%d", time.gmtime())
+    return None, None, {"code": "unavailable", "reason": "no_model", "requested_date": requested, "used_date": None}
+
+
+def agent_report(lat: float, lon: float, date: str | None = None, area_name: str | None = None, language: str = "en",
+                 use_ai: bool = True, gemini_api_key: str | None = None) -> tuple[bytes, dict]:
+    """The agent's PDF: always a filled document (model map report, point-value report or standards document)."""
+    if language not in LANGUAGES:
+        raise ValueError(f"language must be one of {sorted(LANGUAGES)}")
+    started = time.monotonic()
+    facts, point, notice = agent_facts(lat, lon, date, area_name)
+    if point is not None:
+        used = language if language == "en" or resolve_fonts()[2] else "en"
+        try:
+            pdf = build_point_pdf(point, used)
+        except Exception:  # noqa: BLE001
+            log.exception("Point report layout failed; retrying in English")
+            pdf, used = build_point_pdf(point, "en"), "en"
+        return pdf, {"status": point["status"], "area_mean": point["value"], "date": point["date"], "language": used,
+                     "narrative": "template", "narrative_model": None, "notice": None, "source": "google"}
+    pdf, meta = _render(facts, notice, area_name or "Selected area", language, use_ai, gemini_api_key, started)
+    meta["source"] = facts["data_source"]["kind"] if facts else None
+    return pdf, meta
+
+
+def public_point_facts(pf: dict, language: str = "en") -> dict:
+    """A point value in the same JSON shape as ``public_facts`` (single value: no hotspots, exposure or trend)."""
+    v, band = pf["value"], pf["band"]
+    return {
+        "area": pf["area"], "date": pf["date"], "language": language, "data_source": pf["data_source"],
+        "standards": {"naaqs_24h": NAAQS_24H, "naaqs_annual": NAAQS_ANNUAL, "who_24h": WHO_24H},
+        "current": {"mean": v, "median": v, "p95": v, "max": v, "max_near": pf["area"]["name"], "status": pf["status"],
+                    "band": band, "pct_vs_naaqs": round((v - NAAQS_24H) / NAAQS_24H * 100, 1),
+                    "share_above_naaqs": 1.0 if v > NAAQS_24H else 0.0, "share_above_who": 1.0 if v > WHO_24H else 0.0,
+                    "band_shares": {k: 1.0 if k == band else 0.0 for k in ("normal", "moderate", "unhealthy", "hazardous")}},
+        "window_stats": {"mean": v}, "hotspots": [], "population": None, "trend": None,
+        "forecast": {"alerts": [], "horizons": []},
+        "labels": {"status": STATUS[language][pf["status"]], "band": BAND[language][band], "hotspot_sources": []},
+        "texts": {"summary": _plain(point_summary(pf, language)), "forecast": [], "trend": [],
+                  "recommendations": list(RECOMMENDATIONS[language][pf["status"]]),
+                  "notice": None, "source": source_text(pf, language)},
+    }
+
+
+def agent_analysis(lat: float, lon: float, date: str | None = None, area_name: str | None = None,
+                   language: str = "en") -> dict:
+    """The agent's on-screen analysis (no PDF, no Gemini): model output, else Google point value."""
+    if language not in LANGUAGES:
+        raise ValueError(f"language must be one of {sorted(LANGUAGES)}")
+    facts, point, notice = agent_facts(lat, lon, date, area_name)
+    if facts is not None:
+        out = public_facts(facts, language)
+        out["texts"]["source"] = source_text(facts, language)
+        return out
+    if point is not None:
+        return public_point_facts(point, language)
+    raise RuntimeError("No AI model output covers this location yet and the Google Air Quality API is unavailable. "
+                       "Upload satellite files on the Model Upload page.")
 
 
 _NON_JSON = ("surface_map", "water_mask", "grid")
@@ -185,4 +313,5 @@ def analyse_area(bbox=None, date=None, city=None, area_name=None, language="en",
     return public_facts(facts, language)
 
 
-__all__ = ["analyse_area", "build_facts", "gather_facts", "generate_report", "public_facts"]
+__all__ = ["agent_analysis", "agent_report", "analyse_area", "build_facts", "gather_facts", "generate_report",
+           "public_facts"]

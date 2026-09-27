@@ -20,49 +20,10 @@ interface UploadContextValue {
   setFolderName: (name: string | null) => void;
 }
 
-const INITIAL_MOCK_FILES: ExtendedUploadedFile[] = [
-  {
-    id: 'demo-file-1',
-    name: 'S5P_NRTI_L2__NO2____20240926T074523_MMR_Coastal.nc',
-    sizeBytes: 42 * 1024 * 1024,
-    type: 'NetCDF-4',
-    lastModified: 1727360000000,
-    status: 'COMPLETED',
-    progressPercent: 100,
-    stats: {
-      cloudCoverInitial: 48.2,
-      cloudCoverCleaned: 0.0,
-      originalResolution: '7.0km × 3.5km',
-      downscaledResolution: '1.0km × 1.0km',
-      meanNO2: 68.4,
-      peakNO2: 184.2,
-      processingDurationSec: 1.84,
-    },
-  },
-  {
-    id: 'demo-file-2',
-    name: 'Sentinel5P_Delhi_NCR_WinterInversion_Swath.tif',
-    sizeBytes: 78 * 1024 * 1024,
-    type: 'GeoTIFF',
-    lastModified: 1727350000000,
-    status: 'QUEUED',
-    progressPercent: 0,
-  },
-  {
-    id: 'demo-file-3',
-    name: 'Bengaluru_Industrial_Peenya_Sector_Tile04.hdf5',
-    sizeBytes: 115 * 1024 * 1024,
-    type: 'HDF5',
-    lastModified: 1727340000000,
-    status: 'QUEUED',
-    progressPercent: 0,
-  },
-];
-
 const UploadContext = createContext<UploadContextValue | undefined>(undefined);
 
 export function UploadProvider({ children }: { children: React.ReactNode }) {
-  const [files, setFiles] = useState<ExtendedUploadedFile[]>(INITIAL_MOCK_FILES);
+  const [files, setFiles] = useState<ExtendedUploadedFile[]>([]);
   const [folderName, setFolderName] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
 
@@ -73,7 +34,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setFiles(parsed);
+          // drop the old placeholder entries, and pending files whose contents a reload has lost
+          // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring saved state on mount
+          setFiles(
+            parsed
+              .filter((f: ExtendedUploadedFile) => !f.id.startsWith('demo-file-'))
+              .map((f: ExtendedUploadedFile) =>
+                f.status === 'COMPLETED' || f.status === 'FAILED'
+                  ? f
+                  : { ...f, status: 'FAILED' as const, progressPercent: 0, error: 'Page was reloaded; add the file again.' }
+              )
+          );
         }
       }
       const storedFolder = localStorage.getItem(FOLDER_KEY);

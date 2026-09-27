@@ -28,7 +28,8 @@ app.add_middleware(
     allow_headers=["*"],
     # let the browser read the report file name and status headers
     expose_headers=["Content-Disposition", "X-Report-Status", "X-Report-Narrative", "X-Report-Language",
-                    "X-Report-Notice"],
+                    "X-Report-Notice", "X-Model-Date", "X-Model-Source", "X-Model-Job",
+                    "X-Report-Source"],
 )
 
 # compress JSON responses (the global NO2 grid is ~2.8 MB of base64 before compression)

@@ -1,115 +1,66 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { fromArrayBuffer } from 'geotiff';
-import { DEFAULT_BBOX, generateSyntheticFrame } from '../visualization/_components/stubs';
+import { useCallback, useEffect, useState } from 'react';
+import { loadLatestModelGrid, type ModelGrid } from '@/lib/modelOutput';
 
 export interface HomeGeoTiffData {
-  no2: Float32Array;
+  no2: Float32Array; // µg/m³, ground level, 250 m (the ML engine's output)
   width: number;
   height: number;
   bbox: [number, number, number, number]; // [minLng, minLat, maxLng, maxLat]
+  date: string | null;
+  source: string | null; // "upload" (Model Upload page) | "run" (stored model run)
+  grid: ModelGrid;
 }
 
 export interface UseHomeGeoTiffLoaderReturn {
   data: HomeGeoTiffData | null;
   isLoading: boolean;
   error: string | null;
-  load: () => Promise<HomeGeoTiffData>;
+  load: () => Promise<HomeGeoTiffData | null>;
 }
 
-const API_BASE = 'http://localhost:8000';
-
+/**
+ * The newest ML engine output (latest finished upload, else the newest stored run) for the map heatmap.
+ * Refetched on mount so a just-finished upload shows up; there is no synthetic fallback: if the model
+ * output cannot be loaded the heatmap is simply not drawn.
+ */
 export function useHomeGeoTiffLoader(): UseHomeGeoTiffLoaderReturn {
   const [data, setData] = useState<HomeGeoTiffData | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const cachedDataRef = useRef<HomeGeoTiffData | null>(null);
 
-  const load = useCallback(async (): Promise<HomeGeoTiffData> => {
-    if (cachedDataRef.current) {
-      return cachedDataRef.current;
-    }
-
+  const load = useCallback(async (refresh = false): Promise<HomeGeoTiffData | null> => {
     setIsLoading(true);
     setError(null);
-
     try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const url = `${API_BASE}/api/v1/downscale/geotiff`;
-      const response = await fetch(url, { headers });
-
-      if (!response.ok) {
-        throw new Error(`Server returned HTTP ${response.status}`);
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const tiff = await fromArrayBuffer(arrayBuffer);
-      const image = await tiff.getImage();
-
-      const rawBbox = image.getBoundingBox();
-      const frameBbox: [number, number, number, number] = [
-        rawBbox[0],
-        rawBbox[1],
-        rawBbox[2],
-        rawBbox[3],
-      ];
-
-      const width = image.getWidth();
-      const height = image.getHeight();
-      const rasters = await image.readRasters();
-
-      if (rasters.length === 0) {
-        throw new Error('GeoTIFF contained no raster bands');
-      }
-
-      const no2 = rasters[0] as Float32Array;
-
-      const loadedData: HomeGeoTiffData = {
-        no2,
-        width,
-        height,
-        bbox: frameBbox,
+      const grid = await loadLatestModelGrid(refresh);
+      const loaded: HomeGeoTiffData = {
+        no2: grid.values,
+        width: grid.width,
+        height: grid.height,
+        bbox: grid.bbox,
+        date: grid.date,
+        source: grid.source,
+        grid,
       };
-
-      cachedDataRef.current = loadedData;
-      setData(loadedData);
-      return loadedData;
+      setData(loaded);
+      return loaded;
     } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to fetch GeoTIFF';
-      console.warn(`Home GeoTIFF loader falling back to synthetic frame: ${errorMsg}`);
-      setError(`Backend error (${errorMsg}). Using synthetic baseline.`);
-
-      // Fallback: smooth synthetic frame (100x100 grid) matching Visualization page
-      const synth = generateSyntheticFrame(100, 100, DEFAULT_BBOX, 0);
-      const fallbackData: HomeGeoTiffData = {
-        no2: synth.no2,
-        width: synth.width,
-        height: synth.height,
-        bbox: synth.bbox,
-      };
-
-      cachedDataRef.current = fallbackData;
-      setData(fallbackData);
-      return fallbackData;
+      const message = err instanceof Error ? err.message : 'Failed to load the model output';
+      console.warn(`Model output for the map is unavailable: ${message}`);
+      setError(message);
+      setData(null);
+      return null;
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    load();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetching on mount is the point of this effect
+    load(true);
   }, [load]);
 
-  return {
-    data,
-    isLoading,
-    error,
-    load,
-  };
+  return { data, isLoading, error, load: () => load(true) };
 }

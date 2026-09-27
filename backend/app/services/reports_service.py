@@ -9,6 +9,7 @@ from supabase import Client
 
 from app.core.config import settings
 from app.services.activity_service import log_activity
+from ml_engine.report import agent_analysis, agent_report
 from ml_engine.report import analyse_area as build_analysis
 from ml_engine.report import generate_report as build_report
 
@@ -26,6 +27,11 @@ def _parse_bbox(bbox: str) -> List[float]:
 def _filename(region_name: str, date: str, language: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9]+", "_", region_name).strip("_")[:40] or "area"
     return f"no2_report_{slug}_{date}_{language}.pdf"
+
+
+def _centre(bbox: str) -> tuple[float, float]:
+    w, s, e, n = _parse_bbox(bbox)
+    return (s + n) / 2, (w + e) / 2
 
 
 async def _call_engine(fn, bbox: str, city: Optional[str], **kwargs):
@@ -50,12 +56,21 @@ async def analyse_area(
     end_date: str,
     language: str = "en",
     city: Optional[str] = None,
+    data_source: str = "model",
 ) -> dict:
     """
     The report's analysis as JSON for the web page: the area's NO2 on ``end_date`` against the CPCB NAAQS
     and WHO standards, hotspots, population exposure, forecast alerts and the weather-adjusted trend.
     Uses the same cached pipeline run as the PDF and never calls Gemini.
     """
+    if data_source == "model":
+        lat, lon = _centre(bbox)
+        try:
+            return await asyncio.to_thread(agent_analysis, lat, lon, end_date[:10], region_name, language)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except Exception as exc:  # no model output here and no Google value
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     return await _call_engine(build_analysis, bbox, city, date=end_date[:10], area_name=region_name,
                               language=language)
 
@@ -70,6 +85,7 @@ async def generate_report(
     language: str = "en",
     use_ai: bool = True,
     city: Optional[str] = None,
+    data_source: str = "model",
 ) -> StreamingResponse:
     """
     Generate the area NO2 report as a PDF.
@@ -90,10 +106,18 @@ async def generate_report(
         use_ai: Whether to try the Gemini narrative.
         city: Optional known city name; overrides bbox.
     """
-    pdf_bytes, meta = await _call_engine(
-        build_report, bbox, city, date=end_date[:10], area_name=region_name, language=language, use_ai=use_ai,
-        gemini_api_key=settings.GEMINI_API_KEY,
-    )
+    if data_source == "model":
+        lat, lon = _centre(bbox)
+        try:
+            pdf_bytes, meta = await asyncio.to_thread(
+                agent_report, lat, lon, end_date[:10], region_name, language, use_ai, settings.GEMINI_API_KEY)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+    else:
+        pdf_bytes, meta = await _call_engine(
+            build_report, bbox, city, date=end_date[:10], area_name=region_name, language=language, use_ai=use_ai,
+            gemini_api_key=settings.GEMINI_API_KEY,
+        )
 
     await log_activity(
         supabase,
@@ -112,5 +136,6 @@ async def generate_report(
             "X-Report-Narrative": meta["narrative"],
             "X-Report-Language": meta["language"],
             "X-Report-Notice": meta.get("notice") or "",
+            "X-Report-Source": meta.get("source") or "",
         },
     )

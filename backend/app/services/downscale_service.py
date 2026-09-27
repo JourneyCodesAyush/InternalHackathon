@@ -1,13 +1,15 @@
 import asyncio
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from supabase import Client
 
 from app.core.config import settings
 from app.models.downscale import DownscaleMapResponse
 from app.services.activity_service import log_activity
+from ml_engine import uploads
 from ml_engine.service import RUNS_ROOT, generate_map
 
 
@@ -75,4 +77,50 @@ async def get_downscaled_map(
         hazard_geojson_url=_file_url(result["hazard_geojson"]),
         netcdf_url=_file_url(result["surface_netcdf"]),
         metrics=result["metrics"],
+    )
+
+
+async def submit_upload(files: List[UploadFile]) -> dict:
+    """Read the uploaded GeoTIFFs and start (or reuse) a model run on them."""
+    payload = [(f.filename or "upload.tif", await f.read()) for f in files]
+    try:
+        return await asyncio.to_thread(uploads.submit_upload, payload)
+    except (ValueError, FileNotFoundError) as exc:  # wrong format, grid, CRS or file names
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+def get_job(job_id: str) -> dict:
+    try:
+        return uploads.job_status(job_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown upload job")
+
+
+def _public(output: dict) -> dict:
+    return {k: v for k, v in output.items() if k not in ("surface_tif", "raw_tif")}
+
+
+def get_latest() -> dict:
+    output = uploads.latest_output()
+    if output is None:
+        raise HTTPException(status_code=404, detail="No model output yet: upload files on the Model Upload page")
+    return _public(output)
+
+
+def get_geotiff(job_id: Optional[str], date: Optional[str], kind: str) -> FileResponse:
+    try:
+        output = uploads.job_output(job_id, date) if job_id else uploads.latest_output()
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Unknown or unfinished upload job")
+    if output is None:
+        raise HTTPException(status_code=404, detail="No model output yet: upload files on the Model Upload page")
+    path = Path(output["surface_tif"] if kind == "surface" else output["raw_tif"])
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"{kind} GeoTIFF not found for {output['date']}")
+    return FileResponse(
+        path,
+        media_type="image/tiff",
+        filename=f"no2_{kind}_{output['date']}.tif",
+        headers={"X-Model-Date": output["date"], "X-Model-Source": output["source"],
+                 "X-Model-Job": output.get("job_id") or "", "Cache-Control": "no-store"},
     )

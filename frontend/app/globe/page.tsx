@@ -6,7 +6,13 @@ import Link from 'next/link';
 import { Globe2, Map as MapIcon, Loader2, X, Info, Pause, Play, RefreshCw, AlertTriangle, Wind, RotateCw, Satellite } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { MAX_COLUMN, MIN_COLUMN, type GlobeFrames, type HoverInfo } from '../components/globe/GlobeCanvas';
-import { fetchGlobalSnapshot, hoursAgo, syntheticSnapshot, type GlobalSnapshot } from '../components/globe/globeData';
+import {
+  fetchFallbackSnapshot,
+  fetchGlobalSnapshot,
+  hoursAgo,
+  syntheticSnapshot,
+  type GlobalSnapshot,
+} from '../components/globe/globeData';
 import { explainRegion } from '../components/globe/regionInsights';
 import type { FlowRequest, FlowResult, FlowProgress } from '../components/globe/globeFlow.worker';
 
@@ -40,7 +46,6 @@ function legendValue(t: number): number {
 export default function GlobePage() {
   const [phase, setPhase] = useState<Phase>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [liveError, setLiveError] = useState<string | null>(null);
   const [selected, setSelected] = useState<{ lat: number; lon: number } | null>(null);
   const [progress, setProgress] = useState(0);
   const [snapshot, setSnapshot] = useState<GlobalSnapshot | null>(null);
@@ -101,12 +106,16 @@ export default function GlobePage() {
       setError(null);
       try {
         compute(await fetchGlobalSnapshot(24, signal));
-        setLiveError(null);
       } catch (e) {
         if (e instanceof DOMException && e.name === 'AbortError') return;
-        setLiveError(e instanceof Error ? e.message : 'Live data unavailable.');
-        // keep whatever is on screen (real or demo); on first load show the simulated demo layer
-        if (!snapshotRef.current) compute(syntheticSnapshot());
+        console.warn('Global NO₂ from the backend failed; using the stored snapshot', e);
+        // keep whatever is on screen; on first load use the stored real snapshot, then the typical pattern
+        if (snapshotRef.current) return;
+        try {
+          compute(await fetchFallbackSnapshot(signal));
+        } catch {
+          compute(syntheticSnapshot());
+        }
       }
     },
     [compute],
@@ -151,7 +160,7 @@ export default function GlobePage() {
   const insight = useMemo(() => {
     if (!selected) return null;
     const field =
-      frames && filled && snapshot
+      frames && filled && snapshot && snapshot.demo !== 'simulated'
         ? { width: frames.width, height: frames.height, resDeg: snapshot.resDeg, values: frames.frames[0], observed: filled }
         : null;
     const month = snapshot ? new Date(snapshot.fetchedAt.replace('Z', ':00Z')).getUTCMonth() + 1 : 1;
@@ -168,7 +177,9 @@ export default function GlobePage() {
     const value = frames.frames[f][2 * k];
     const conf = frames.frames[f][2 * k + 1];
     const kind =
-      f === 0
+      snapshot.demo === 'simulated'
+        ? 'typical level'
+        : f === 0
         ? filled[k] >= 1
           ? 'observed'
           : filled[k] > 0
@@ -177,7 +188,10 @@ export default function GlobePage() {
         : conf > 0.05
           ? `wind drift +${f} h (indicative)`
           : 'no recent observation';
-    readout = { value: conf > 0.05 ? value : null, kind, age: f === 0 && filled[k] >= 1 ? snapshot.ageH[k] : null };
+    // age now = age when the snapshot was taken + time since then
+    const sinceFetch = hoursAgo(snapshot.fetchedAt, now) ?? 0;
+    const observedAge = f === 0 && filled[k] >= 1 && snapshot.demo !== 'simulated' ? snapshot.ageH[k] + sinceFetch : null;
+    readout = { value: conf > 0.05 ? value : null, kind, age: observedAge };
   }
 
   const newestAgo = snapshot ? hoursAgo(snapshot.newestObs, now) : null;
@@ -206,26 +220,29 @@ export default function GlobePage() {
         <div className="absolute top-3 left-3 right-3 sm:right-auto sm:top-4 sm:left-4 z-10 sm:max-w-sm p-3 rounded-lg bg-[#11141d]/90 border border-[#2e3547] backdrop-blur-md shadow-xl text-xs space-y-2">
           <div className="flex items-center gap-2 font-semibold text-zinc-100 text-sm">
             <Globe2 className="w-4 h-4 text-blue-400" />
-            Global NO₂ — Sentinel-5P
+            {snapshot?.demo === 'simulated' ? 'Global NO₂ — typical pattern' : 'Global NO₂ — Sentinel-5P'}
             <Link
               href="/"
               className="md:hidden ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded border border-[#2e3547] text-[10px] text-zinc-300"
             >
               <MapIcon className="w-3 h-3" /> Map
             </Link>
-            <span className="md:ml-auto px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono">
-              {snapshot?.demo === 'simulated' ? 'DEMO' : 'NRTI'}
-            </span>
+            {snapshot?.demo !== 'simulated' && (
+              <span className="md:ml-auto px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono">
+                NRTI
+              </span>
+            )}
           </div>
           {snapshot?.demo === 'simulated' ? (
             <p className="text-[11px] text-zinc-300">
-              Illustrative layer: typical NO₂ over the world&apos;s main emission regions, with climatological wind belts.
+              NO₂ over the world&apos;s main emission regions, with the prevailing wind belts.
             </p>
           ) : snapshot ? (
             <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
               <span className="text-zinc-500">Newest orbit</span>
               <span className="text-zinc-200">
-                {fmtUtc(snapshot.newestObs)} <span className="text-emerald-300">({fmtAgo(newestAgo)})</span>
+                {fmtUtc(snapshot.newestObs)}
+                {newestAgo !== null && newestAgo < 24 && <span className="text-emerald-300"> ({fmtAgo(newestAgo)})</span>}
               </span>
               <span className="text-zinc-500">Window</span>
               <span className="text-zinc-300">latest cloud-free pass per cell, last {snapshot.hours} h</span>
@@ -236,31 +253,6 @@ export default function GlobePage() {
             </div>
           ) : (
             <p className="text-[11px] text-zinc-400">Latest tropospheric NO₂ columns from every Sentinel-5P orbit.</p>
-          )}
-          {snapshot?.demo && (
-            <div className="flex items-start gap-1.5 p-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-200">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              <span className="flex-1">
-                {snapshot.demo === 'simulated'
-                  ? 'Demo data: live data is unavailable, so this is a simulated layer of the main NO₂ regions.'
-                  : `Demo data: live data is unavailable, showing a stored real snapshot from ${fmtUtc(snapshot.fetchedAt)}.`}
-              </span>
-              <button type="button" onClick={() => load()} className="underline cursor-pointer shrink-0">
-                Retry
-              </button>
-            </div>
-          )}
-          {liveError && snapshot && !snapshot.demo && (
-            <div className="text-[10px] text-amber-300">Refresh failed; still showing the data below.</div>
-          )}
-          {snapshot?.frozen && (
-            <div className="text-[10px] text-sky-300">Snapshot of {fmtUtc(snapshot.fetchedAt)} · live updates paused</div>
-          )}
-          {snapshot?.stale && !snapshot.frozen && !snapshot.demo && (
-            <div className="flex items-start gap-1.5 text-[10px] text-amber-300">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              Earth Engine is unavailable; showing the last stored snapshot ({fmtUtc(snapshot.fetchedAt)}).
-            </div>
           )}
           <p className="text-[10px] text-sky-300/80">Tap a country or ocean to see why NO₂ is high or low there.</p>
           <p className="hidden sm:block text-[10px] text-zinc-500 leading-relaxed">
@@ -289,7 +281,7 @@ export default function GlobePage() {
                 <>
                   <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
                   {phase === 'loading'
-                    ? 'Fetching the latest Sentinel-5P orbits (up to ~30 s when new data arrived)…'
+                    ? 'Fetching the latest Sentinel-5P orbits (up to ~40 s when new orbits arrived)…'
                     : `Filling cloud gaps and computing wind drift… ${Math.round(progress * 100)}%`}
                 </>
               )}
@@ -350,9 +342,6 @@ export default function GlobePage() {
                 <li key={line}>{line}</li>
               ))}
             </ul>
-            {snapshot?.demo === 'simulated' && (
-              <p className="text-[10px] text-amber-300/80">Figures come from the simulated demo layer.</p>
-            )}
           </div>
         )}
 

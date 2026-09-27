@@ -213,6 +213,59 @@ def _notice_box(text: str, title: str, st: dict, page_w: float) -> Table:
     return box
 
 
+def build_point_pdf(pf: dict, lang: str) -> bytes:
+    """Report for a single point value (Google Air Quality fallback): status, comparison with the CPCB NAAQS
+    and WHO guideline, hazard bands with health guidance, recommendations and the data source."""
+    regular, bold, deva = resolve_fonts()
+    if lang != "en" and not deva:
+        lang = "en"
+    st = _styles(regular, bold, shaping=deva)
+    L = tx.T[lang]
+    buf = io.BytesIO()
+    page_w = A4[0] - 3.6 * cm
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.8 * cm, rightMargin=1.8 * cm, topMargin=1.6 * cm,
+                            bottomMargin=2.0 * cm, title=f"NO2 report {pf['area']['name']} {pf['date']}")
+    meta = Table([[Paragraph(f"<b>{L['area']}:</b> {escape(pf['area']['name'])}", st["cell"]),
+                   Paragraph(f"<b>{L['report_date']}:</b> {tx.fmt_date(pf['date'], lang)}", st["cell"])],
+                  [Paragraph(f"<b>{L['generated']}:</b> {generated}", st["cell"]), ""]], colWidths=[page_w / 2] * 2)
+    badge = Table([[Paragraph(f"{L['status']}: {tx.STATUS[lang][pf['status']]}", st["badge"])],
+                   [Paragraph(tx.STATUS_DESC[lang][pf["status"]], st["badged"])]], colWidths=[page_w])
+    badge.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(STATUS_COLOURS[pf["status"]])),
+                               ("LEFTPADDING", (0, 0), (-1, -1), 10), ("TOPPADDING", (0, 0), (-1, -1), 5),
+                               ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    story = [Paragraph(L["title"], st["title"]), Paragraph(L["subtitle"], st["subtitle"]), Spacer(1, 8), meta,
+             Spacer(1, 8), badge, Spacer(1, 8),
+             Paragraph(L["h_summary"], st["h2"]), Paragraph(tx.point_summary(pf, lang), st["body"])]
+
+    v = pf["value"]
+    diff = lambda s_: f"{'+' if v > s_ else ''}{(v - s_) / s_ * 100:.0f}%"  # noqa: E731
+    rows = [[L["metric"], L["current"], L["standard"], L["difference"]],
+            [L["row_point"], f"{v:.0f} {tx.UG}", f"{NAAQS_24H:.0f} (CPCB 24 h)", diff(NAAQS_24H)],
+            [L["row_point"], f"{v:.0f} {tx.UG}", f"{NAAQS_ANNUAL:.0f} (CPCB annual)", diff(NAAQS_ANNUAL)],
+            [L["row_point"], f"{v:.0f} {tx.UG}", f"{WHO_24H:.0f} (WHO 24 h)", diff(WHO_24H)]]
+    story += [Paragraph(L["h_comparison"], st["h2"]), _table(rows, st, [page_w * 0.42, page_w * 0.18, page_w * 0.24, page_w * 0.16])]
+
+    band_rows = [["", L["band"], L["range"], L["advice"]]]
+    ranges = {"normal": "0–40", "moderate": "40–80", "unhealthy": "80–180", "hazardous": "> 180"}
+    for code in (1, 2, 3, 4):
+        k = BAND_KEYS[code]
+        label = f"<b>{tx.BAND[lang][k]} · {L['current']}</b>" if k == pf["band"] else tx.BAND[lang][k]
+        band_rows.append(["", Paragraph(label, st["cell"]), ranges[k], tx.BAND_ADVICE[lang][k]])
+    band_tbl = _table(band_rows, st, [page_w * 0.03, page_w * 0.2, page_w * 0.15, page_w * 0.62])
+    band_tbl.setStyle(TableStyle([("BACKGROUND", (0, i), (0, i), colors.HexColor(BAND_COLOURS[BAND_KEYS[i]]))
+                                  for i in (1, 2, 3, 4)]))
+    story += [Spacer(1, 6), band_tbl]
+
+    recos = list(tx.RECOMMENDATIONS[lang][pf["status"]])
+    story += [Paragraph(L["h_reco"], st["h2"]),
+              ListFlowable([ListItem(Paragraph(r, st["body"]), leftIndent=12) for r in recos], bulletType="bullet",
+                           start="•", leftIndent=12)]
+    story += [Paragraph(L["h_method"], st["h2"]), Paragraph(escape(tx.source_text(pf, lang) or ""), st["small"])]
+    doc.build(story)
+    return buf.getvalue()
+
+
 def build_unavailable_pdf(area_name: str, date: str, lang: str, notice: dict) -> bytes:
     """The fallback document when no model map exists: standards, hazard bands and health guidance."""
     regular, bold, deva = resolve_fonts()
@@ -331,11 +384,11 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
         map_w = min(page_w * 0.62, 11 * cm / aspect)
         hot_rows = [[L["hotspot"], L["location"], L["value"], L["sources"]]]
         for h in facts["hotspots"]:
-            hot_rows.append([str(h["rank"]), f"{escape(h['near'])}<br/><font size='7.5' color='#5b6675'>{h['lat']:.3f}°N, "
-                                             f"{h['lon']:.3f}°E</font>",
+            coords = f"{h['lat']:.3f}°N, {h['lon']:.3f}°E"
+            place = escape(h["near"]) if h["near"] == coords else f"{escape(h['near'])}<br/><font size='7.5' color='#5b6675'>{coords}</font>"
+            hot_rows.append([str(h["rank"]), place,
                              f"{h['value']:.0f} ({tx.BAND[lang][h['band']]})", ", ".join(tx.SOURCE[lang][s] for s in h["sources"])])
-        story += [Paragraph(L["h_map"], st["h2"]),
-                  KeepTogether([RLImage(img_buf, width=map_w, height=map_w * aspect), _legend(map_w),
+        story += [KeepTogether([Paragraph(L["h_map"], st["h2"]), RLImage(img_buf, width=map_w, height=map_w * aspect), _legend(map_w),
                                 Paragraph(L["map_caption"].format(no2=tx.NO2, ug=tx.UG, date=tx.fmt_date(facts["date"], lang),
                                                                   max=f"{cur['max']:.0f}", near=escape(cur["max_near"])), st["small"])]),
                   Spacer(1, 6), _table(hot_rows, st, [page_w * 0.06, page_w * 0.36, page_w * 0.24, page_w * 0.34])]
@@ -375,7 +428,11 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
               ListFlowable([ListItem(Paragraph(r, st["body"]), leftIndent=12) for r in recos], bulletType="bullet",
                            start="•", leftIndent=12)]
 
-    story += [Paragraph(L["h_method"], st["h2"]), Paragraph(tx.method_text(facts, lang), st["small"]), Spacer(1, 4),
+    story += [Paragraph(L["h_method"], st["h2"])]
+    source = tx.source_text(facts, lang)
+    if source:
+        story += [Paragraph(escape(source), st["small"]), Spacer(1, 3)]
+    story += [Paragraph(tx.method_text(facts, lang), st["small"]), Spacer(1, 4),
               Paragraph(L["narrative_ai"] if narrative else L["narrative_template"], st["small"])]
     if language_fallback:
         story.append(Paragraph(tx.T["en"]["lang_fallback"], st["small"]))

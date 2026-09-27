@@ -177,8 +177,16 @@ export default function GlobeCanvas({
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(40, mount.clientWidth / mount.clientHeight, 0.1, 100);
+    // Distance at which the globe plus its atmosphere fits the narrower of the two view angles, so it is
+    // never cropped on narrow or short screens
+    const fitDistance = () => {
+      const vfov = (camera.fov * Math.PI) / 180;
+      const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+      return 1.18 / Math.sin(Math.min(vfov, hfov) / 2);
+    };
+    let fittedDistance = fitDistance();
     // start over South Asia: look from the direction of 20°N 78°E
-    camera.position.copy(toXYZ(20, 78, 4.4, new THREE.Vector3()));
+    camera.position.copy(toXYZ(20, 78, fittedDistance, new THREE.Vector3()));
 
     const maps = drawBaseMap(4096);
     const baseTexture = new THREE.CanvasTexture(maps.base);
@@ -244,7 +252,7 @@ export default function GlobeCanvas({
     controls.dampingFactor = 0.08;
     controls.enablePan = false;
     controls.minDistance = 1.35;
-    controls.maxDistance = 8;
+    controls.maxDistance = Math.max(8, fittedDistance * 1.5);
     controls.rotateSpeed = 0.5;
     controls.zoomSpeed = 0.7;
     controls.autoRotateSpeed = 0.35;
@@ -302,6 +310,11 @@ export default function GlobeCanvas({
       renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      // keep the globe fitted after a resize, unless the user has zoomed in or out themselves
+      const next = fitDistance();
+      if (Math.abs(camera.position.length() - fittedDistance) < 0.02) camera.position.setLength(next);
+      fittedDistance = next;
+      controls.maxDistance = Math.max(8, next * 1.5);
     });
     resize.observe(mount);
 

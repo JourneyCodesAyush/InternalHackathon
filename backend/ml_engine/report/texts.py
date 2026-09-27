@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from .analysis import band_key
+
 LANGUAGES = {"en": "English", "hi": "Hindi", "mr": "Marathi"}
 NO2 = "NO<sub>2</sub>"
 UG = "µg/m³"
@@ -62,6 +64,13 @@ T = {
         "narrative_template": "Narrative sections: standard template. All numbers are computed by the model.",
         "lang_fallback": "Hindi and Marathi reports need a Devanagari font on the server; this report is in English.",
         "h_notice": "Data notice",
+        "point_line": "At the selected location, {name}, the model gives {value} {ug} ({band}).",
+        "h_point": "Measured Value at the Selected Point",
+        "row_point": "NO<sub>2</sub> at the selected point (hourly)",
+        "src_upload": "Data source: AI model output from uploaded Sentinel-5P files ({days} days, {first} – {last}), 250 m ground-level map.",
+        "src_run": "Data source: AI model output (satellite model run for this area), 250 m ground-level map.",
+        "src_google": "Data source: Google Air Quality API, current hourly conditions at {lat}, {lon} ({time}); {raw} {units} converted to µg/m³. No satellite-model map covers this point yet; upload satellite files on the Model Upload page for a 250 m map with hotspots, exposure and trends.",
+        "point_summary": "On {date}, NO<sub>2</sub> at {area} was {value} {ug}, {pct}% {dir} the national 24-hour standard of 80 {ug} (status: {status}).",
         "notice_cached": "New satellite data for {requested} could not be processed ({reason}). This report uses the "
                          "model's most recent map for this area, for {used}.",
         "notice_unavailable": "The model could not produce a map for this area on {requested} ({reason}), and no earlier "
@@ -106,6 +115,13 @@ T = {
         "narrative_ai": "विवरण खंड: AI सारांश (Gemini)। सभी आँकड़े मॉडल द्वारा गणना किए गए हैं, AI द्वारा नहीं।",
         "narrative_template": "विवरण खंड: मानक टेम्पलेट। सभी आँकड़े मॉडल द्वारा गणना किए गए हैं।",
         "h_notice": "डेटा सूचना",
+        "point_line": "चयनित स्थान {name} पर मॉडल के अनुसार NO<sub>2</sub> {value} {ug} ({band}) है।",
+        "h_point": "चयनित स्थान पर मापा गया मान",
+        "row_point": "चयनित स्थान पर NO<sub>2</sub> (प्रति घंटा)",
+        "src_upload": "डेटा स्रोत: अपलोड की गई Sentinel-5P फ़ाइलों ({days} दिन, {first} – {last}) पर AI मॉडल का आउटपुट, 250 मी. ज़मीनी स्तर का मानचित्र।",
+        "src_run": "डेटा स्रोत: AI मॉडल का आउटपुट (इस क्षेत्र का उपग्रह मॉडल रन), 250 मी. ज़मीनी स्तर का मानचित्र।",
+        "src_google": "डेटा स्रोत: Google Air Quality API, {lat}, {lon} पर वर्तमान प्रति घंटा स्थिति ({time}); {raw} {units} को µg/m³ में बदला गया। इस स्थान के लिए अभी उपग्रह-मॉडल मानचित्र उपलब्ध नहीं है; हॉटस्पॉट, जोखिम और रुझान वाले 250 मी. मानचित्र के लिए Model Upload पेज पर उपग्रह फ़ाइलें अपलोड करें।",
+        "point_summary": "{date} को {area} में NO<sub>2</sub> {value} {ug} था, जो 80 {ug} के राष्ट्रीय 24-घंटे मानक से {pct}% {dir} है (स्थिति: {status})।",
         "notice_cached": "{requested} का नया उपग्रह डेटा संसाधित नहीं हो सका ({reason})। यह रिपोर्ट इस क्षेत्र के लिए "
                          "मॉडल के सबसे हाल के मानचित्र ({used}) पर आधारित है।",
         "notice_unavailable": "मॉडल {requested} के लिए इस क्षेत्र का मानचित्र नहीं बना सका ({reason}), और इस क्षेत्र का कोई "
@@ -151,6 +167,13 @@ T = {
         "narrative_ai": "वर्णनात्मक विभाग: AI सारांश (Gemini). सर्व आकडे मॉडेलने मोजले आहेत, AI ने नाहीत.",
         "narrative_template": "वर्णनात्मक विभाग: मानक साचा. सर्व आकडे मॉडेलने मोजले आहेत.",
         "h_notice": "डेटा सूचना",
+        "point_line": "निवडलेल्या ठिकाणी, {name} येथे, मॉडेलनुसार NO<sub>2</sub> {value} {ug} ({band}) आहे.",
+        "h_point": "निवडलेल्या ठिकाणी मोजलेले मूल्य",
+        "row_point": "निवडलेल्या ठिकाणी NO<sub>2</sub> (प्रति तास)",
+        "src_upload": "डेटा स्रोत: अपलोड केलेल्या Sentinel-5P फायलींवर ({days} दिवस, {first} – {last}) AI मॉडेलचे आउटपुट, 250 मी. जमिनी पातळीचा नकाशा.",
+        "src_run": "डेटा स्रोत: AI मॉडेलचे आउटपुट (या क्षेत्राचा उपग्रह मॉडेल रन), 250 मी. जमिनी पातळीचा नकाशा.",
+        "src_google": "डेटा स्रोत: Google Air Quality API, {lat}, {lon} येथील सध्याची प्रति तास स्थिती ({time}); {raw} {units} चे µg/m³ मध्ये रूपांतर केले. या ठिकाणासाठी अद्याप उपग्रह-मॉडेल नकाशा उपलब्ध नाही; हॉटस्पॉट, जोखीम आणि कल असलेल्या 250 मी. नकाशासाठी Model Upload पानावर उपग्रह फायली अपलोड करा.",
+        "point_summary": "{date} रोजी {area} येथे NO<sub>2</sub> {value} {ug} होते, जे 80 {ug} या राष्ट्रीय 24-तास मानकापेक्षा {pct}% {dir} आहे (स्थिती: {status}).",
         "notice_cached": "{requested} चा नवीन उपग्रह डेटा प्रक्रिया करता आला नाही ({reason}). हा अहवाल या क्षेत्रासाठी "
                          "मॉडेलच्या सर्वात अलीकडील नकाशावर ({used}) आधारित आहे.",
         "notice_unavailable": "मॉडेल {requested} साठी या क्षेत्राचा नकाशा तयार करू शकले नाही ({reason}), आणि या क्षेत्राचा "
@@ -435,6 +458,10 @@ def summary_text(facts: dict, lang: str) -> str:
         status=STATUS[lang][cur["status"]], share=pct(cur["share_above_naaqs"]), max=f"{cur['max']:.0f}",
         near=cur["max_near"])
     parts = [text]
+    pt = facts.get("point")
+    if pt and pt.get("value") is not None:
+        parts.append(T[lang]["point_line"].format(name=pt["name"], value=f"{pt['value']:.0f}", ug=UG,
+                                                  band=BAND[lang][band_key(pt["value"])]))
     if facts.get("population"):
         parts.append(population_text(facts, lang))
     if facts.get("trend"):
@@ -491,17 +518,20 @@ REASON = {
            "quota": "satellite data service usage limit reached", "config": "satellite data service not configured",
            "network": "satellite data service could not be reached",
            "no_data": "no satellite data available for these dates", "error": "processing error",
-           "offline": "live satellite updates are paused"},
+           "offline": "live satellite updates are paused",
+           "no_model": "no satellite model map covers this location yet (upload satellite files for it)"},
     "hi": {"processing": "नया उपग्रह डेटा अभी संसाधित हो रहा है; यह पृष्ठभूमि में जारी है",
            "quota": "उपग्रह डेटा सेवा की उपयोग सीमा पूरी हो गई", "config": "उपग्रह डेटा सेवा कॉन्फ़िगर नहीं है",
            "network": "उपग्रह डेटा सेवा से संपर्क नहीं हो सका",
            "no_data": "इन तिथियों के लिए उपग्रह डेटा उपलब्ध नहीं है", "error": "प्रसंस्करण त्रुटि",
-           "offline": "लाइव उपग्रह अपडेट रोके गए हैं"},
+           "offline": "लाइव उपग्रह अपडेट रोके गए हैं",
+           "no_model": "इस स्थान के लिए अभी कोई उपग्रह मॉडल मानचित्र नहीं है (इसके लिए उपग्रह फ़ाइलें अपलोड करें)"},
     "mr": {"processing": "नवीन उपग्रह डेटावर अजून प्रक्रिया सुरू आहे; ती पार्श्वभूमीत चालू राहील",
            "quota": "उपग्रह डेटा सेवेची वापर मर्यादा संपली", "config": "उपग्रह डेटा सेवा कॉन्फिगर केलेली नाही",
            "network": "उपग्रह डेटा सेवेशी संपर्क होऊ शकला नाही",
            "no_data": "या तारखांसाठी उपग्रह डेटा उपलब्ध नाही", "error": "प्रक्रिया त्रुटी",
-           "offline": "थेट उपग्रह अद्यतने थांबवली आहेत"},
+           "offline": "थेट उपग्रह अद्यतने थांबवली आहेत",
+           "no_model": "या ठिकाणासाठी अद्याप उपग्रह मॉडेल नकाशा नाही (त्यासाठी उपग्रह फायली अपलोड करा)"},
 }
 
 
@@ -511,6 +541,27 @@ def notice_text(notice: dict, lang: str) -> str:
     used = fmt_date(notice["used_date"], lang) if notice.get("used_date") else ""
     reason = REASON[lang].get(notice["reason"], REASON[lang]["error"])
     return T[lang][key].format(requested=fmt_date(notice["requested_date"], lang), used=used, reason=reason)
+
+
+def source_text(facts: dict, lang: str) -> str | None:
+    """Where the report's numbers come from (model upload / model run / Google point value)."""
+    src = facts.get("data_source")
+    if not src:
+        return None
+    if src["kind"] == "upload":
+        return T[lang]["src_upload"].format(days=src.get("days", "?"), first=fmt_date(src["first_date"], lang),
+                                            last=fmt_date(src["last_date"], lang))
+    if src["kind"] == "run":
+        return T[lang]["src_run"]
+    return T[lang]["src_google"].format(lat=f"{src['lat']:.3f}", lon=f"{src['lon']:.3f}", time=src.get("time") or "—",
+                                        raw=f"{src['raw_value']:.1f}", units=src.get("raw_units", "").lower().replace("_", " "))
+
+
+def point_summary(pf: dict, lang: str) -> str:
+    diff = (pf["value"] - 80) / 80 * 100
+    return T[lang]["point_summary"].format(date=fmt_date(pf["date"], lang), area=pf["area"]["name"], value=f"{pf['value']:.0f}",
+                                           ug=UG, pct=f"{abs(diff):.0f}", dir=T[lang]["above"] if diff > 0 else T[lang]["below"],
+                                           status=STATUS[lang][pf["status"]])
 
 
 def method_text(facts: dict, lang: str) -> str:
