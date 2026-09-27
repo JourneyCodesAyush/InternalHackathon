@@ -11,9 +11,10 @@ import {
   Factory,
   Compass,
   Cpu,
-  Eye,
+  ScanLine,
   Sliders,
-  Sparkles,
+  Grid3x3,
+  Satellite,
 } from 'lucide-react';
 import HazardLegend from './HazardLegend';
 import { PRESET_REGIONS } from '@/lib/constants';
@@ -100,11 +101,14 @@ export default function Sidebar({
           <>
             {/* Quick Preset Regions */}
             <div>
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                <Sliders className="w-3.5 h-3.5" />
-                Benchmark Regions
+              <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                <span className="flex items-center gap-1.5">
+                  <Sliders className="w-3.5 h-3.5" />
+                  Benchmark Regions
+                </span>
+                <span className="text-[9px] font-mono text-zinc-500">CALIBRATED</span>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {PRESET_REGIONS.map((region) => {
                   const isSelected =
                     selectedCoords &&
@@ -115,17 +119,23 @@ export default function Sidebar({
                     <button
                       key={region.name}
                       onClick={() => onSelectRegion?.(region.center, region.zoom)}
-                      className={`w-full text-left px-2.5 py-1.5 rounded text-xs transition-all cursor-pointer ${
+                      className={`w-full text-left p-2.5 rounded-lg text-xs transition-all cursor-pointer border ${
                         isSelected
-                          ? 'bg-blue-600/20 border border-blue-500/80 text-white shadow-sm ring-1 ring-blue-500/30'
-                          : 'text-zinc-300 bg-[#161a26] border border-[#242938] hover:border-zinc-500 hover:bg-[#1c2233]'
+                          ? 'bg-[#141926] border-blue-500/70 border-l-2 border-l-blue-500 text-white shadow-sm ring-1 ring-blue-500/20'
+                          : 'text-zinc-300 bg-[#11141d]/90 border-[#1f2535] hover:border-[#2e384e] hover:bg-[#151926]'
                       }`}
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-1">
                         <span className={`font-medium truncate ${isSelected ? 'text-blue-200' : 'text-zinc-200'}`}>
                           {region.name}
                         </span>
-                        {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />}
+                        {isSelected ? (
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 animate-pulse" />
+                        ) : (
+                          <span className="font-mono text-[9px] text-zinc-500">
+                            {region.center[0].toFixed(1)}°,{region.center[1].toFixed(1)}°
+                          </span>
+                        )}
                       </div>
                       <div className="text-[10px] text-zinc-400 truncate mt-0.5">{region.description}</div>
                     </button>
@@ -136,95 +146,208 @@ export default function Sidebar({
 
             {/* Map Layer Toggles */}
             <div>
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-                <Layers className="w-3.5 h-3.5" />
-                Layer Stack
+              <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                <span className="flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5" />
+                  Layer Stack
+                </span>
+                <span className="text-[9px] font-mono text-zinc-500">FILTERS</span>
               </div>
 
               <div className="space-y-1.5">
                 {/* Downscaled Layer */}
-                <label className="flex items-center justify-between p-2 rounded bg-[#161a26] border border-[#242938] hover:border-[#3b4257] cursor-pointer text-xs text-zinc-300">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-                    <div>
-                      <div className="font-medium text-zinc-200">AI Fine Grid (1km)</div>
-                      <div className="text-[10px] text-zinc-400">XGBoost ML Downscaled</div>
+                <label
+                  htmlFor="layer-downscaled"
+                  className={`flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer text-xs ${
+                    activeLayers.downscaled
+                      ? 'bg-[#141926] border-[#29354d] border-l-2 border-l-blue-500 shadow-sm'
+                      : 'bg-[#11141d]/90 border-[#1f2535] hover:border-[#2e384e] opacity-75 hover:opacity-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Grid3x3 className={`w-3.5 h-3.5 shrink-0 ${activeLayers.downscaled ? 'text-blue-400' : 'text-zinc-500'}`} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-zinc-200 truncate">AI Fine Grid (1km)</span>
+                        <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                          1km RES
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-zinc-400 truncate">XGBoost ML Downscaled</div>
                     </div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={activeLayers.downscaled}
-                    onChange={() => onToggleLayer?.('downscaled')}
-                    className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-blue-600"
-                  />
+                  <div className="relative inline-flex items-center cursor-pointer shrink-0 ml-2">
+                    <input
+                      type="checkbox"
+                      id="layer-downscaled"
+                      checked={activeLayers.downscaled}
+                      onChange={() => onToggleLayer?.('downscaled')}
+                      className="sr-only peer"
+                    />
+                    <div className={`w-7 h-4 rounded-full transition-colors duration-150 ${
+                      activeLayers.downscaled ? 'bg-blue-600' : 'bg-[#1e2434] border border-[#2e374d]'
+                    }`}>
+                      <div className={`w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-150 mt-[2px] ml-[2px] ${
+                        activeLayers.downscaled ? 'translate-x-3' : 'translate-x-0'
+                      }`} />
+                    </div>
+                  </div>
                 </label>
 
                 {/* Cloud-Filled Gap Imputation */}
-                <label className="flex items-center justify-between p-2 rounded bg-[#161a26] border border-[#242938] hover:border-[#3b4257] cursor-pointer text-xs text-zinc-300">
-                  <div className="flex items-center gap-2">
-                    <Eye className="w-3.5 h-3.5 text-amber-400" />
-                    <div>
-                      <div className="font-medium text-zinc-200">Cloud Gap Infilling</div>
-                      <div className="text-[10px] text-zinc-400">Kriging / Autoencoder</div>
+                <label
+                  htmlFor="layer-cloudFilled"
+                  className={`flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer text-xs ${
+                    activeLayers.cloudFilled
+                      ? 'bg-[#141926] border-[#29354d] border-l-2 border-l-amber-500 shadow-sm'
+                      : 'bg-[#11141d]/90 border-[#1f2535] hover:border-[#2e384e] opacity-75 hover:opacity-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <ScanLine className={`w-3.5 h-3.5 shrink-0 ${activeLayers.cloudFilled ? 'text-amber-400' : 'text-zinc-500'}`} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-zinc-200 truncate">Cloud Gap Infilling</span>
+                        <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
+                          GAP-FILL
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-zinc-400 truncate">Kriging / Autoencoder</div>
                     </div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={activeLayers.cloudFilled}
-                    onChange={() => onToggleLayer?.('cloudFilled')}
-                    className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-blue-600"
-                  />
+                  <div className="relative inline-flex items-center cursor-pointer shrink-0 ml-2">
+                    <input
+                      type="checkbox"
+                      id="layer-cloudFilled"
+                      checked={activeLayers.cloudFilled}
+                      onChange={() => onToggleLayer?.('cloudFilled')}
+                      className="sr-only peer"
+                    />
+                    <div className={`w-7 h-4 rounded-full transition-colors duration-150 ${
+                      activeLayers.cloudFilled ? 'bg-amber-600' : 'bg-[#1e2434] border border-[#2e374d]'
+                    }`}>
+                      <div className={`w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-150 mt-[2px] ml-[2px] ${
+                        activeLayers.cloudFilled ? 'translate-x-3' : 'translate-x-0'
+                      }`} />
+                    </div>
+                  </div>
                 </label>
 
                 {/* Raw Coarse Layer */}
-                <label className="flex items-center justify-between p-2 rounded bg-[#161a26] border border-[#242938] hover:border-[#3b4257] cursor-pointer text-xs text-zinc-300">
-                  <div className="flex items-center gap-2">
-                    <Layers className="w-3.5 h-3.5 text-purple-400" />
-                    <div>
-                      <div className="font-medium text-zinc-200">Raw Sentinel-5P (7km)</div>
-                      <div className="text-[10px] text-zinc-400">Coarse Satellite Swath</div>
+                <label
+                  htmlFor="layer-rawCoarse"
+                  className={`flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer text-xs ${
+                    activeLayers.rawCoarse
+                      ? 'bg-[#141926] border-[#29354d] border-l-2 border-l-indigo-500 shadow-sm'
+                      : 'bg-[#11141d]/90 border-[#1f2535] hover:border-[#2e384e] opacity-75 hover:opacity-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Satellite className={`w-3.5 h-3.5 shrink-0 ${activeLayers.rawCoarse ? 'text-indigo-400' : 'text-zinc-500'}`} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-zinc-200 truncate">Raw Sentinel-5P</span>
+                        <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
+                          7km SWATH
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-zinc-400 truncate">Coarse Satellite Swath</div>
                     </div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={activeLayers.rawCoarse}
-                    onChange={() => onToggleLayer?.('rawCoarse')}
-                    className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-blue-600"
-                  />
+                  <div className="relative inline-flex items-center cursor-pointer shrink-0 ml-2">
+                    <input
+                      type="checkbox"
+                      id="layer-rawCoarse"
+                      checked={activeLayers.rawCoarse}
+                      onChange={() => onToggleLayer?.('rawCoarse')}
+                      className="sr-only peer"
+                    />
+                    <div className={`w-7 h-4 rounded-full transition-colors duration-150 ${
+                      activeLayers.rawCoarse ? 'bg-indigo-600' : 'bg-[#1e2434] border border-[#2e374d]'
+                    }`}>
+                      <div className={`w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-150 mt-[2px] ml-[2px] ${
+                        activeLayers.rawCoarse ? 'translate-x-3' : 'translate-x-0'
+                      }`} />
+                    </div>
+                  </div>
                 </label>
 
                 {/* Wind Vectors Layer */}
-                <label className="flex items-center justify-between p-2 rounded bg-[#161a26] border border-[#242938] hover:border-[#3b4257] cursor-pointer text-xs text-zinc-300">
-                  <div className="flex items-center gap-2">
-                    <Wind className="w-3.5 h-3.5 text-teal-400" />
-                    <div>
-                      <div className="font-medium text-zinc-200">Wind Advection Flow</div>
-                      <div className="text-[10px] text-zinc-400">Atmospheric u,v vectors</div>
+                <label
+                  htmlFor="layer-windVectors"
+                  className={`flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer text-xs ${
+                    activeLayers.windVectors
+                      ? 'bg-[#141926] border-[#29354d] border-l-2 border-l-sky-500 shadow-sm'
+                      : 'bg-[#11141d]/90 border-[#1f2535] hover:border-[#2e384e] opacity-75 hover:opacity-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Wind className={`w-3.5 h-3.5 shrink-0 ${activeLayers.windVectors ? 'text-sky-400' : 'text-zinc-500'}`} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-zinc-200 truncate">Wind Advection Flow</span>
+                        <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 shrink-0">
+                          ERA5 10m
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-zinc-400 truncate">Atmospheric u,v vectors</div>
                     </div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={activeLayers.windVectors}
-                    onChange={() => onToggleLayer?.('windVectors')}
-                    className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-blue-600"
-                  />
+                  <div className="relative inline-flex items-center cursor-pointer shrink-0 ml-2">
+                    <input
+                      type="checkbox"
+                      id="layer-windVectors"
+                      checked={activeLayers.windVectors}
+                      onChange={() => onToggleLayer?.('windVectors')}
+                      className="sr-only peer"
+                    />
+                    <div className={`w-7 h-4 rounded-full transition-colors duration-150 ${
+                      activeLayers.windVectors ? 'bg-sky-600' : 'bg-[#1e2434] border border-[#2e374d]'
+                    }`}>
+                      <div className={`w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-150 mt-[2px] ml-[2px] ${
+                        activeLayers.windVectors ? 'translate-x-3' : 'translate-x-0'
+                      }`} />
+                    </div>
+                  </div>
                 </label>
 
                 {/* POI Sources Layer */}
-                <label className="flex items-center justify-between p-2 rounded bg-[#161a26] border border-[#242938] hover:border-[#3b4257] cursor-pointer text-xs text-zinc-300">
-                  <div className="flex items-center gap-2">
-                    <Factory className="w-3.5 h-3.5 text-rose-400" />
-                    <div>
-                      <div className="font-medium text-zinc-200">Point Sources (POIs)</div>
-                      <div className="text-[10px] text-zinc-400">Industrial & Corridors</div>
+                <label
+                  htmlFor="layer-pois"
+                  className={`flex items-center justify-between p-2.5 rounded-lg border transition-all cursor-pointer text-xs ${
+                    activeLayers.pois
+                      ? 'bg-[#141926] border-[#29354d] border-l-2 border-l-rose-500 shadow-sm'
+                      : 'bg-[#11141d]/90 border-[#1f2535] hover:border-[#2e384e] opacity-75 hover:opacity-100'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Factory className={`w-3.5 h-3.5 shrink-0 ${activeLayers.pois ? 'text-rose-400' : 'text-zinc-500'}`} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-zinc-200 truncate">Point Sources (POIs)</span>
+                        <span className="text-[9px] font-mono font-medium px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20 shrink-0">
+                          POSTGIS
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-zinc-400 truncate">Industrial & Corridors</div>
                     </div>
                   </div>
-                  <input
-                    type="checkbox"
-                    checked={activeLayers.pois}
-                    onChange={() => onToggleLayer?.('pois')}
-                    className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-blue-600 focus:ring-0 focus:ring-offset-0 cursor-pointer accent-blue-600"
-                  />
+                  <div className="relative inline-flex items-center cursor-pointer shrink-0 ml-2">
+                    <input
+                      type="checkbox"
+                      id="layer-pois"
+                      checked={activeLayers.pois}
+                      onChange={() => onToggleLayer?.('pois')}
+                      className="sr-only peer"
+                    />
+                    <div className={`w-7 h-4 rounded-full transition-colors duration-150 ${
+                      activeLayers.pois ? 'bg-rose-600' : 'bg-[#1e2434] border border-[#2e374d]'
+                    }`}>
+                      <div className={`w-3 h-3 rounded-full bg-white shadow-sm transition-transform duration-150 mt-[2px] ml-[2px] ${
+                        activeLayers.pois ? 'translate-x-3' : 'translate-x-0'
+                      }`} />
+                    </div>
+                  </div>
                 </label>
               </div>
             </div>

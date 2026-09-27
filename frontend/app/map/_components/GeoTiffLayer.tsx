@@ -18,6 +18,7 @@ const API_BASE = 'http://localhost:8000';
 
 /** AQI-style NO₂ color scale matching the existing UI */
 const NO2_SCALE = chroma
+<<<<<<< HEAD
   .scale([
     '#00e400',
     '#ffff00',
@@ -26,6 +27,9 @@ const NO2_SCALE = chroma
     '#8f3f97',
     '#7e0023',
   ])
+=======
+  .scale(['#10b981', '#eab308', '#f97316', '#ef4444', '#9333ea', '#6b1124'])
+>>>>>>> d88a1492cb9d852eed42b61c499d9cd4749b91ee
   .domain([0, 40, 80, 120, 160, 200])
   .mode('lch');
 
