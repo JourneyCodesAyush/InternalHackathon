@@ -9,7 +9,9 @@ from supabase import Client
 
 from app.core.config import settings
 from app.services.activity_service import log_activity
+from app.services import upload_data
 from ml_engine.report import analyse_area as build_analysis
+from ml_engine.report import analyse_upload, generate_upload_report
 from ml_engine.report import generate_report as build_report
 
 
@@ -50,12 +52,21 @@ async def analyse_area(
     end_date: str,
     language: str = "en",
     city: Optional[str] = None,
+    data_source: Optional[str] = None,
 ) -> dict:
     """
     The report's analysis as JSON for the web page: the area's NO2 on ``end_date`` against the CPCB NAAQS
     and WHO standards, hotspots, population exposure, forecast alerts and the weather-adjusted trend.
     Uses the same cached pipeline run as the PDF and never calls Gemini.
     """
+    if data_source == "upload":
+        try:
+            return await asyncio.to_thread(analyse_upload, upload_data.data_dir(), end_date[:10], region_name, language,
+                                           settings.EE_PROJECT)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except Exception as exc:  # no model output for the uploaded data yet
+            raise HTTPException(status_code=503, detail=f"Report generation failed: {exc}") from exc
     return await _call_engine(build_analysis, bbox, city, date=end_date[:10], area_name=region_name,
                               language=language)
 
@@ -70,6 +81,7 @@ async def generate_report(
     language: str = "en",
     use_ai: bool = True,
     city: Optional[str] = None,
+    data_source: Optional[str] = None,
 ) -> StreamingResponse:
     """
     Generate the area NO2 report as a PDF.
@@ -90,10 +102,20 @@ async def generate_report(
         use_ai: Whether to try the Gemini narrative.
         city: Optional known city name; overrides bbox.
     """
-    pdf_bytes, meta = await _call_engine(
-        build_report, bbox, city, date=end_date[:10], area_name=region_name, language=language, use_ai=use_ai,
-        gemini_api_key=settings.GEMINI_API_KEY,
-    )
+    if data_source == "upload":
+        try:
+            pdf_bytes, meta = await asyncio.to_thread(
+                generate_upload_report, upload_data.data_dir(), end_date[:10], region_name, language, use_ai,
+                settings.EE_PROJECT, settings.GEMINI_API_KEY)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except Exception as exc:  # e.g. no uploaded files
+            raise HTTPException(status_code=503, detail=f"Report generation failed: {exc}") from exc
+    else:
+        pdf_bytes, meta = await _call_engine(
+            build_report, bbox, city, date=end_date[:10], area_name=region_name, language=language, use_ai=use_ai,
+            gemini_api_key=settings.GEMINI_API_KEY,
+        )
 
     await log_activity(
         supabase,

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Layers, ChevronDown, Bot, Sparkles, LogIn, LogOut, User as UserIcon } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -8,9 +8,26 @@ import MapView from './components/MapView';
 import LocationSearch from './components/LocationSearch';
 import TrendPanel from './components/TrendPanel';
 import ReportGenerator from './components/ReportGenerator';
-import { calculateAttribution, PRESET_REGIONS } from '@/lib/constants';
+import { calculateAttribution, getHazardCategory, PRESET_REGIONS } from '@/lib/constants';
 import { PinpointAttributionResult } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+/** GET /api/v1/trends/point: the uploaded day's value at the point and the forecast model's predictions. */
+interface PointForecast {
+  key: string;
+  date: string;
+  inside: boolean;
+  value: number;
+  horizons: { hours: number; no2: number; confidence: number }[];
+  wind: { speed: number; deg: number; direction: string };
+}
+
+function authHeaders(): Record<string, string> {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export default function HomePage() {
   const { isAuthenticated, displayName, signOut } = useAuth();
@@ -44,9 +61,74 @@ export default function HomePage() {
   });
 
   // Pinpoint intelligence analysis data
+  // Uploaded days (same source as the Plume Flow page) and the one shown on the map / in the pinpoint card
+  const [availableDates, setAvailableDates] = useState<string[]>([]);
+  const [selectedDate, setSelectedDate] = useState<string>('');
+  const [datesReady, setDatesReady] = useState<boolean>(false);
+  const [pointForecast, setPointForecast] = useState<PointForecast | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/api/v1/downscale/dates`, { headers: authHeaders() })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.dates) && data.dates.length > 0) {
+          setAvailableDates(data.dates);
+          setSelectedDate((current) => (current && data.dates.includes(current) ? current : data.dates[0]));
+        }
+      })
+      .catch((err) => console.warn('Could not load uploaded dates:', err))
+      .finally(() => !cancelled && setDatesReady(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Value at the pin for the selected day + the forecasting model's predictions (fast; mock values until then)
+  const pointKey = selectedCoords && selectedDate ? `${selectedCoords[0]},${selectedCoords[1]},${selectedDate}` : '';
+  useEffect(() => {
+    if (!pointKey || !selectedCoords) return;
+    let cancelled = false;
+    const [lat, lon] = selectedCoords;
+    fetch(`${API_BASE}/api/v1/trends/point?lat=${lat}&lon=${lon}&date=${selectedDate}`, { headers: authHeaders() })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setPointForecast({ ...data, key: pointKey });
+      })
+      .catch((err) => console.warn('Point forecast unavailable; keeping the estimate:', err));
+    return () => {
+      cancelled = true;
+    };
+  }, [pointKey, selectedCoords, selectedDate]);
+
   const [trendData, setTrendData] = useState<PinpointAttributionResult | null>(() =>
     calculateAttribution(PRESET_REGIONS[0].center[0], PRESET_REGIONS[0].center[1], 'Shivaji Park, Mumbai')
   );
+
+  const pinpointData = useMemo<PinpointAttributionResult | null>(() => {
+    if (!trendData) return null;
+    const pf = pointForecast;
+    if (!pf || pf.key !== pointKey || !pf.inside) return trendData;
+    const current = Math.round(pf.value);
+    const hazard = getHazardCategory(current);
+    const byHours = new Map(pf.horizons.map((h) => [h.hours, h]));
+    const forecast = trendData.forecast.map((f) => {
+      if (f.timeOffsetHours === 0) return { ...f, no2Value: current, dispersionFactor: 1, projectedAQI: current };
+      const h = byHours.get(f.timeOffsetHours);
+      if (!h) return f;
+      const v = Math.round(h.no2);
+      return { ...f, no2Value: v, dispersionFactor: current ? Math.round((v / current) * 100) / 100 : 1, projectedAQI: v };
+    });
+    return {
+      ...trendData,
+      currentNO2: current,
+      hazardBand: hazard.category,
+      forecast,
+      windVector: { speed: pf.wind.speed, direction: `${pf.wind.direction} (${pf.wind.deg}°)`, deg: pf.wind.deg },
+      summary: trendData.summary.replace(`(${trendData.currentNO2} µg/m³)`, `(${current} µg/m³)`),
+      regulatoryCompliance: current > 180 ? 'CRITICAL_VIOLATION' : current > 80 ? 'EXCEEDANCE_WARNING' : 'COMPLIANT',
+    };
+  }, [trendData, pointForecast, pointKey]);
 
   // Handle toggling of individual map layers
   const handleToggleLayer = (
@@ -225,14 +307,18 @@ export default function HomePage() {
           onMapClick={handleMapClick}
           timeOffsetHours={timeOffsetHours}
           mapTypeId={mapTypeId}
+          selectedDate={datesReady ? selectedDate || undefined : ''}
         />
 
         {/* Slide-in Trend & Attribution Panel */}
         {trendData && (
           <TrendPanel
-            data={trendData}
+            data={pinpointData}
             onClose={() => setTrendData(null)}
             onTimeSliderChange={(offset) => setTimeOffsetHours(offset)}
+            dates={availableDates}
+            selectedDate={selectedDate}
+            onDateChange={setSelectedDate}
           />
         )}
 
@@ -242,6 +328,9 @@ export default function HomePage() {
           onClose={() => setIsReportOpen(false)}
           locationName={selectedLocationName}
           coords={selectedCoords}
+          availableDates={availableDates}
+          selectedDate={selectedDate || undefined}
+          onDateChange={setSelectedDate}
         />
       </main>
     </div>

@@ -22,12 +22,19 @@ interface TrendPanelProps {
   data: PinpointAttributionResult | null;
   onClose: () => void;
   onTimeSliderChange?: (timeOffset: number) => void;
+  /** Uploaded days (from /downscale/dates) and the one shown on the map. */
+  dates?: string[];
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
 }
 
 export default function TrendPanel({
   data,
   onClose,
   onTimeSliderChange,
+  dates,
+  selectedDate,
+  onDateChange,
 }: TrendPanelProps) {
   const [selectedHorizon, setSelectedHorizon] = useState<number>(0);
 
@@ -108,6 +115,23 @@ export default function TrendPanel({
           <h2 className="font-semibold text-sm text-zinc-100 mt-1 truncate max-w-[270px]">
             {data.locationName}
           </h2>
+          {dates && dates.length > 0 && onDateChange && (
+            <label className="mt-1.5 flex items-center gap-2 text-[11px] text-zinc-400">
+              Date
+              <select
+                value={selectedDate}
+                onChange={(e) => onDateChange(e.target.value)}
+                className="h-6 px-1.5 rounded bg-[#11141d] border border-[#2e3547] text-zinc-200 text-[11px] font-mono cursor-pointer [color-scheme:dark]"
+                aria-label="Data date"
+              >
+                {dates.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
 
         <button

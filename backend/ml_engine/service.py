@@ -99,6 +99,31 @@ def _run(bbox: tuple[float, float, float, float], day: pd.Timestamp, ee_project:
     return run_dir
 
 
+def _files_run_dir(input_dir: str | Path) -> Path:
+    """Cache location of the run on a folder of daily GeoTIFFs (keyed by file names and sizes)."""
+    files = sorted(Path(input_dir).glob("*.tif"))
+    model_tag = PRETRAINED_SURFACE_MODEL.stat().st_mtime_ns if PRETRAINED_SURFACE_MODEL.exists() else 0
+    key = hashlib.sha1(json.dumps([RUN_FORMAT, "files", [(f.name, f.stat().st_size) for f in files],
+                                   model_tag]).encode()).hexdigest()[:16]
+    return RUNS_ROOT / f"files_{key}"
+
+
+def _run_files(input_dir: str | Path, ee_project: str | None) -> Path:
+    """Run (or reuse) the pipeline on uploaded daily GeoTIFFs (``--source files``); returns the run directory.
+    The area and dates come from the files; weather and land use from Earth Engine."""
+    run_dir = _files_run_dir(input_dir)
+    with _lock_for(run_dir.name):
+        if (run_dir / "report.json").exists():
+            return run_dir
+        cfg = PipelineConfig(output_dir=run_dir, model_dir=run_dir / "models")
+        cfg.output_dir.mkdir(parents=True, exist_ok=True)
+        if PRETRAINED_SURFACE_MODEL.exists():
+            cfg.surface_model_path = PRETRAINED_SURFACE_MODEL
+        log.info("ML engine run %s on uploaded files in %s", run_dir.name, input_dir)
+        NO2Pipeline(cfg).run(source="files", input_dir=str(input_dir), ee_project=ee_project)
+    return run_dir
+
+
 def stored_run(bbox: tuple[float, float, float, float], day: pd.Timestamp, source: str = "gee") -> Path | None:
     """The finished run ``_run`` would use for this area and day, without computing anything."""
     run_dir = _run_dir(bbox, day, source)

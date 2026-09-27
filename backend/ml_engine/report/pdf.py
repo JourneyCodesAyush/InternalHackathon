@@ -324,6 +324,22 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
                                   for i in (1, 2, 3, 4)]))
     story += [Spacer(1, 6), band_tbl]
 
+    col = facts.get("column")
+    if col:
+        def both(v):  # µmol/m² and mol/m² (satellite unit) side by side
+            if v is None:
+                return "—", "—"
+            mant, exp = f"{v * 1e-6:.2e}".split("e")
+            return f"{v:.1f}", f"{mant} × 10<super>{int(exp)}</super>"
+        rows = [[L["metric"], "µmol/m²", "mol/m²"]]
+        for key, value in (("col_obs", col["observed_mean"]), ("col_max", col["observed_max"]),
+                           ("col_filled", col["filled_mean"])):
+            rows.append([L[key], *both(value)])
+        rows.append([L["col_cloud"], f"{col['cloud_share'] * 100:.0f}%", "—"])
+        story += [KeepTogether([Paragraph(L["h_column"], st["h2"]),
+                                _table(rows, st, [page_w * 0.52, page_w * 0.2, page_w * 0.28]),
+                                Spacer(1, 3), Paragraph(L["col_note"], st["small"])])]
+
     try:
         grid = facts["grid"]
         img_buf = map_image(facts["surface_map"], facts["hotspots"], grid, water=facts.get("water_mask"))

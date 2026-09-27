@@ -545,12 +545,28 @@ interface ReportGeneratorProps {
   coords: [number, number] | null | undefined; // [lat, lon]
   isOpen?: boolean;
   onClose?: () => void;
+  /** Uploaded days (from /downscale/dates): when given, reports are made for these days of the uploaded data. */
+  availableDates?: string[];
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
 }
 
-export default function ReportGenerator({ locationName, coords, isOpen, onClose }: ReportGeneratorProps) {
+export default function ReportGenerator({
+  locationName,
+  coords,
+  isOpen,
+  onClose,
+  availableDates,
+  selectedDate,
+  onDateChange,
+}: ReportGeneratorProps) {
   const [latestDate] = useState<string>(() => isoDate(new Date(Date.now() - WEATHER_LAG_DAYS * DAY_MS)));
   const [language, setLanguage] = useState<LanguageId>('en');
-  const [reportDate, setReportDate] = useState<string>(latestDate);
+  const [ownDate, setOwnDate] = useState<string>(latestDate);
+  const useUploaded = Boolean(availableDates && availableDates.length > 0);
+  // with uploaded data the date is shared with the map and the pinpoint card
+  const reportDate = useUploaded && selectedDate ? selectedDate : ownDate;
+  const setReportDate = (d: string) => (useUploaded && onDateChange ? onDateChange(d) : setOwnDate(d));
   const [busy, setBusy] = useState<'analysis' | 'pdf' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -622,6 +638,7 @@ Click any suggested question below or type your inquiry to get instant answers!`
       language,
       use_ai: true,
       city: guessCity(locationName),
+      ...(useUploaded ? { data_source: 'upload' } : {}),
     };
 
     // Ensure we retrieve a fresh access token from Supabase session
@@ -800,14 +817,29 @@ Click any suggested question below or type your inquiry to get instant answers!`
           {/* Date Picker */}
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] font-medium text-zinc-400">Date:</span>
-            <input
-              type="date"
-              value={reportDate}
-              max={latestDate}
-              min="2018-07-01"
-              onChange={(e) => setReportDate(e.target.value)}
-              className="h-6 px-2 rounded bg-[#10131c] border border-[#2e3547] text-zinc-200 text-[11px] [color-scheme:dark]"
-            />
+            {useUploaded ? (
+              <select
+                value={reportDate}
+                onChange={(e) => setReportDate(e.target.value)}
+                className="h-6 px-2 rounded bg-[#10131c] border border-[#2e3547] text-zinc-200 text-[11px] font-mono cursor-pointer [color-scheme:dark]"
+                aria-label="Report date"
+              >
+                {availableDates!.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="date"
+                value={reportDate}
+                max={latestDate}
+                min="2018-07-01"
+                onChange={(e) => setReportDate(e.target.value)}
+                className="h-6 px-2 rounded bg-[#10131c] border border-[#2e3547] text-zinc-200 text-[11px] [color-scheme:dark]"
+              />
+            )}
           </div>
 
           {/* Action Buttons */}

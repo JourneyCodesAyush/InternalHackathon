@@ -20,6 +20,8 @@ interface MapInnerProps {
   onMapClick: (coords: [number, number]) => void;
   timeOffsetHours?: number;
   mapTypeId?: 'roadmap' | 'satellite' | 'hybrid' | 'terrain';
+  /** Uploaded day to show (from /downscale/dates), as on the Plume Flow page. */
+  selectedDate?: string;
 }
 
 // Synthetic coarse 7km raw satellite footprint
@@ -54,6 +56,7 @@ export default function MapInner({
   onMapClick,
   timeOffsetHours = 0,
   mapTypeId = 'roadmap',
+  selectedDate,
 }: MapInnerProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [mapInstance, setMapInstance] = useState<any>(null);
@@ -71,7 +74,7 @@ export default function MapInner({
   const selectedPulseCircleRef = useRef<any>(null);
 
   // Load NO2 GeoTIFF data for smooth heatmap
-  const { data: geoTiffData } = useHomeGeoTiffLoader();
+  const { data: geoTiffData } = useHomeGeoTiffLoader(selectedDate);
 
   // Keep callback fresh in ref
   const onMapClickRef = useRef(onMapClick);

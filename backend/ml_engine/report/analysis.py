@@ -38,7 +38,7 @@ HOTSPOT_SMOOTH_PX = 2.0
 HOTSPOT_SEPARATION_PX = 10  # ~2.6 km between reported hotspots
 NEAR_STATION_KM = 6.0
 MIN_TREND_DAYS = 10
-FACTS_VERSION = 1  # bump when the facts change, to recompute cached analyses
+FACTS_VERSION = 2  # bump when the facts change, to recompute cached analyses (2: satellite column)
 
 
 def classify_status(area_mean: float, share_above_standard: float) -> str:
@@ -69,6 +69,23 @@ def _band_codes(values: np.ndarray) -> np.ndarray:
     for band in HAZARD_BANDS:
         codes[(values >= band["min"]) & (values < band["max"])] = band["code"]
     return codes
+
+
+def _column(run_dir: Path, raw: np.ndarray | None, t: int) -> dict | None:
+    """The Sentinel-5P tropospheric NO2 column on the report day, in µmol/m² (the run's unit; ×1e-6 = mol/m²):
+    mean and highest of the clear (observed) pixels, and the area mean after cloud gap-filling."""
+    if raw is None:
+        return None
+    raw = raw.astype(np.float64)
+    observed = np.isfinite(raw)
+    out = {"observed_mean": round(float(np.nanmean(raw)), 2) if observed.any() else None,
+           "observed_max": round(float(np.nanmax(raw)), 2) if observed.any() else None,
+           "cloud_share": float(1 - observed.mean()), "filled_mean": None, "units": "umol m-2"}
+    path = run_dir / "coarse_gapfilled.nc"
+    if path.exists():
+        filled = xr.load_dataset(path, engine="h5netcdf")["no2"].isel(time=t).values.astype(np.float64)
+        out["filled_mean"] = round(float(np.nanmean(filled)), 2)
+    return out
 
 
 def _load_run(run_dir: Path):
@@ -340,6 +357,7 @@ def _compute_facts(run_dir: Path, date: str, area_name: str = "") -> dict:
     trend = _section("trend", lambda: weather_adjusted_trend(dates, daily_mean, weather, t), None)
 
     raw_no2 = coarse["no2"].isel(time=t).values if "no2" in coarse else None
+    column = _section("column", lambda: _column(run_dir, raw_no2, t), None)
     return {
         "area": {"name": area_name, "bbox": [round(v, 3) for v in grid.bbox],
                  "centre": [round((grid.south + grid.north) / 2, 3), round((grid.west + grid.east) / 2, 3)]},
@@ -371,6 +389,7 @@ def _compute_facts(run_dir: Path, date: str, area_name: str = "") -> dict:
             "downscale_r2": round(float(report["downscaler"]["temporal_holdout_coarse"]["r2"]), 2),
             **_pretrained_accuracy(),
         },
+        "column": column,
         "data": {
             "s5p_product": report["config"].get("s5p_product", "OFFL"),
             "cloudy_share_day": float(np.isnan(raw_no2).mean()) if raw_no2 is not None else None,
