@@ -2,32 +2,93 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { Compass, RotateCcw, Crosshair, Cpu } from 'lucide-react';
+import { RotateCcw, Crosshair, Cpu, Radio } from 'lucide-react';
 
-interface Attitude3DProps {
-  isSimulating: boolean;
-}
-
-export default function Attitude3D({ isSimulating }: Attitude3DProps) {
+export default function Attitude3D() {
   const mountRef = useRef<HTMLDivElement>(null);
   const [pitch, setPitch] = useState(0);
   const [roll, setRoll] = useState(0);
   const [yaw, setYaw] = useState(0);
+  const [fcConnected, setFcConnected] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
 
-  // References for animation
+  // References for animation and live hardware data
   const droneGroupRef = useRef<THREE.Group | null>(null);
-  const propsRef = useRef<THREE.Mesh[]>([]);
-  const isSimulatingRef = useRef(isSimulating);
   const isCalibratingRef = useRef(false);
-
-  useEffect(() => {
-    isSimulatingRef.current = isSimulating;
-  }, [isSimulating]);
+  const hardwareAttitudeRef = useRef<{ roll: number; pitch: number; yaw: number; connected: boolean }>({
+    roll: 0,
+    pitch: 0,
+    yaw: 0,
+    connected: false,
+  });
 
   useEffect(() => {
     isCalibratingRef.current = isCalibrating;
   }, [isCalibrating]);
+
+  // Connect to live hardware gyro stream (WebSocket with HTTP polling fallback)
+  useEffect(() => {
+    let isSubscribed = true;
+    let ws: WebSocket | null = null;
+    let pollInterval: NodeJS.Timeout | null = null;
+
+    const host = typeof window !== 'undefined' ? window.location.hostname || 'localhost' : 'localhost';
+    const httpUrl = `http://${host}:8000/api/v1/drone/attitude`;
+    const wsUrl = `ws://${host}:8000/api/v1/drone/ws/attitude`;
+
+    const startPollingFallback = () => {
+      if (pollInterval) return;
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await fetch(httpUrl);
+          if (!res.ok) return;
+          const data = await res.json();
+          if (!isSubscribed) return;
+          hardwareAttitudeRef.current = data;
+          setPitch(data.pitch || 0);
+          setRoll(data.roll || 0);
+          setYaw(data.yaw || 0);
+          setFcConnected(Boolean(data.connected));
+        } catch {
+          if (isSubscribed) setFcConnected(false);
+        }
+      }, 40); // 25Hz polling fallback
+    };
+
+    try {
+      ws = new WebSocket(wsUrl);
+
+      ws.onmessage = (event) => {
+        if (!isSubscribed) return;
+        try {
+          const data = JSON.parse(event.data);
+          hardwareAttitudeRef.current = data;
+          setPitch(data.pitch || 0);
+          setRoll(data.roll || 0);
+          setYaw(data.yaw || 0);
+          setFcConnected(Boolean(data.connected));
+        } catch {
+          // ignore parse error
+        }
+      };
+
+      ws.onerror = () => {
+        startPollingFallback();
+      };
+
+      ws.onclose = () => {
+        startPollingFallback();
+      };
+    } catch {
+      startPollingFallback();
+    }
+
+    return () => {
+      isSubscribed = false;
+      if (ws) ws.close();
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, []);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -191,9 +252,7 @@ export default function Attitude3D({ isSimulating }: Attitude3DProps) {
       { x: 1.7, z: 1.7, isFront: false },  // Rear Right
     ];
 
-    const propMeshes: THREE.Mesh[] = [];
-
-    motorPositions.forEach((pos, idx) => {
+    motorPositions.forEach((pos) => {
       // Motor Bell
       const motor = new THREE.Mesh(motorGeo, motorMat);
       motor.position.set(pos.x, 0.18, pos.z);
@@ -211,12 +270,9 @@ export default function Attitude3D({ isSimulating }: Attitude3DProps) {
       const prop = new THREE.Mesh(propGeo, pos.isFront ? frontPropMat : rearPropMat);
       prop.position.set(pos.x, 0.42, pos.z);
       droneGroup.add(prop);
-      propMeshes.push(prop);
     });
 
-    propsRef.current = propMeshes;
-
-    // 5. Interactive Mouse Orbit Controls (Lightweight Drag-to-Rotate)
+    // 5. Interactive Mouse Orbit Controls (Drag to rotate view)
     let isDragging = false;
     let prevMouseX = 0;
     let prevMouseY = 0;
@@ -254,68 +310,40 @@ export default function Attitude3D({ isSimulating }: Attitude3DProps) {
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
 
-    // 6. Animation Loop
+    // 6. Animation Loop (Driven Exclusively by Real Physical Drone Gyro / Accel)
     let animId: number;
-    let clock = new THREE.Clock();
 
     const animate = () => {
       animId = requestAnimationFrame(animate);
 
-      const elapsedTime = clock.getElapsedTime();
-      const simulating = isSimulatingRef.current;
       const calibrating = isCalibratingRef.current;
+      const hwAttitude = hardwareAttitudeRef.current;
 
       if (droneGroupRef.current) {
         if (calibrating) {
-          // Calibration leveling animation (quick settle to 0)
-          droneGroupRef.current.rotation.x = THREE.MathUtils.lerp(droneGroupRef.current.rotation.x, 0, 0.15);
-          droneGroupRef.current.rotation.z = THREE.MathUtils.lerp(droneGroupRef.current.rotation.z, 0, 0.15);
-          droneGroupRef.current.rotation.y = THREE.MathUtils.lerp(droneGroupRef.current.rotation.y, 0, 0.15);
-        } else if (simulating) {
-          // Dynamic Betaflight attitude physics:
-          // Forward pitch: -8° to -14°
-          // Bank roll on turns: -10° to +10°
-          // Continuous slow yaw spin to show compass heading
-          const targetPitch = THREE.MathUtils.degToRad(-10 + Math.sin(elapsedTime * 1.5) * 3);
-          const targetRoll = THREE.MathUtils.degToRad(Math.cos(elapsedTime * 1.2) * 8);
-          const targetYaw = (elapsedTime * 0.4) % (Math.PI * 2);
+          // Calibration leveling animation (quick settle to zero)
+          droneGroupRef.current.rotation.x = THREE.MathUtils.lerp(droneGroupRef.current.rotation.x, 0, 0.2);
+          droneGroupRef.current.rotation.z = THREE.MathUtils.lerp(droneGroupRef.current.rotation.z, 0, 0.2);
+          droneGroupRef.current.rotation.y = THREE.MathUtils.lerp(droneGroupRef.current.rotation.y, 0, 0.2);
+        } else if (hwAttitude.connected) {
+          // REAL PHYSICAL FC GYRO / ACCELEROMETER ATTITUDE:
+          // Betaflight convention:
+          // Pitch: positive is nose-up, negative is nose-down
+          // Roll: positive is right-wing-down, negative is left-wing-down
+          // Yaw: 0 to 360 degrees
+          const targetRotX = THREE.MathUtils.degToRad(hwAttitude.pitch);
+          const targetRotZ = THREE.MathUtils.degToRad(-hwAttitude.roll);
+          const targetRotY = THREE.MathUtils.degToRad(-hwAttitude.yaw);
 
-          // Realistic IMU micro-vibration (motor jitter)
-          const jitterX = (Math.random() - 0.5) * 0.008;
-          const jitterZ = (Math.random() - 0.5) * 0.008;
-
-          droneGroupRef.current.rotation.x = THREE.MathUtils.lerp(
-            droneGroupRef.current.rotation.x,
-            targetPitch + jitterX,
-            0.1
-          );
-          droneGroupRef.current.rotation.z = THREE.MathUtils.lerp(
-            droneGroupRef.current.rotation.z,
-            targetRoll + jitterZ,
-            0.1
-          );
-          droneGroupRef.current.rotation.y = targetYaw;
-
-          // Propellers spin at high RPM
-          propsRef.current.forEach((p, i) => {
-            p.rotation.y += (i % 2 === 0 ? 0.45 : -0.45);
-          });
-
-          // Telemetry readout state (throttled)
-          if (Math.floor(elapsedTime * 15) % 3 === 0) {
-            setPitch(Number((THREE.MathUtils.radToDeg(droneGroupRef.current.rotation.x)).toFixed(1)));
-            setRoll(Number((THREE.MathUtils.radToDeg(droneGroupRef.current.rotation.z)).toFixed(1)));
-            setYaw(Number(((THREE.MathUtils.radToDeg(droneGroupRef.current.rotation.y) + 360) % 360).toFixed(0)));
-          }
+          // Highly responsive lerp (0.4) for instant, low-latency tracking of physical FC movements
+          droneGroupRef.current.rotation.x = THREE.MathUtils.lerp(droneGroupRef.current.rotation.x, targetRotX, 0.4);
+          droneGroupRef.current.rotation.z = THREE.MathUtils.lerp(droneGroupRef.current.rotation.z, targetRotZ, 0.4);
+          droneGroupRef.current.rotation.y = THREE.MathUtils.lerp(droneGroupRef.current.rotation.y, targetRotY, 0.4);
         } else {
-          // Level at rest (0° level attitude)
+          // Hardware disconnected: settle to level attitude
           droneGroupRef.current.rotation.x = THREE.MathUtils.lerp(droneGroupRef.current.rotation.x, 0, 0.1);
           droneGroupRef.current.rotation.z = THREE.MathUtils.lerp(droneGroupRef.current.rotation.z, 0, 0.1);
           droneGroupRef.current.rotation.y = THREE.MathUtils.lerp(droneGroupRef.current.rotation.y, 0, 0.05);
-
-          setPitch(0);
-          setRoll(0);
-          setYaw(0);
         }
       }
 
@@ -349,11 +377,18 @@ export default function Attitude3D({ isSimulating }: Attitude3DProps) {
     };
   }, []);
 
-  const handleCalibrate = () => {
+  const handleCalibrate = async () => {
     setIsCalibrating(true);
-    setTimeout(() => {
-      setIsCalibrating(false);
-    }, 1200);
+    try {
+      const host = typeof window !== 'undefined' ? window.location.hostname || 'localhost' : 'localhost';
+      await fetch(`http://${host}:8000/api/v1/drone/calibrate_acc`, { method: 'POST' });
+    } catch {
+      // ignore
+    } finally {
+      setTimeout(() => {
+        setIsCalibrating(false);
+      }, 1200);
+    }
   };
 
   return (
@@ -361,13 +396,18 @@ export default function Attitude3D({ isSimulating }: Attitude3DProps) {
       {/* 3D Canvas Mount */}
       <div ref={mountRef} className="absolute inset-0 z-0 cursor-grab active:cursor-grabbing" />
 
-      {/* TOP BAR: Betaflight Style IMU Readout */}
+      {/* TOP BAR: Betaflight Style Live FC IMU Readout */}
       <div className="relative z-10 flex items-center justify-between text-[11px] font-mono pointer-events-none">
-        <div className="flex items-center gap-2 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10">
+        <div className="flex items-center gap-2 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10">
           <Cpu className="w-3.5 h-3.5 text-blue-400" />
           <span className="text-zinc-400">IMU:</span>
           <span className="text-white font-semibold">ICM-42688P</span>
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-1" />
+          <span
+            className={`w-2 h-2 rounded-full ml-1 ${
+              fcConnected ? 'bg-emerald-400 animate-pulse shadow-sm shadow-emerald-400' : 'bg-zinc-600'
+            }`}
+            title={fcConnected ? 'Live MSP Gyro Stream Active' : 'FC Disconnected'}
+          />
         </div>
 
         <div className="flex items-center gap-2.5 bg-black/80 backdrop-blur-md px-3 py-1 rounded-lg border border-white/10 font-bold text-[11px] shadow-lg">
@@ -385,26 +425,17 @@ export default function Attitude3D({ isSimulating }: Attitude3DProps) {
         </div>
       </div>
 
-      {/* BOTTOM BAR: Calibrate Accel & Horizon Info */}
+      {/* BOTTOM BAR: Status & Interaction */}
       <div className="relative z-10 flex items-center justify-between pointer-events-auto">
-        <div className="flex items-center gap-1.5 text-[9px] font-mono text-zinc-500 bg-black/50 px-2 py-0.5 rounded border border-white/5">
-          <Crosshair className="w-3 h-3 text-zinc-400" />
-          <span>DRAG 3D MODEL TO ORBIT</span>
+        <div className="flex items-center gap-1.5 text-[9px] font-mono text-zinc-400 bg-black/60 px-2 py-0.5 rounded border border-white/10">
+          <Radio className={`w-3 h-3 ${fcConnected ? 'text-emerald-400 animate-pulse' : 'text-zinc-500'}`} />
+          <span>{fcConnected ? 'LIVE MSP GYRO SYNC (115200 BAUD)' : 'AWAITING FC CONNECTION'}</span>
         </div>
 
-        <button
-          onClick={handleCalibrate}
-          disabled={isCalibrating}
-          className={`flex items-center gap-1.5 text-[10px] font-mono px-2.5 py-1 rounded-lg border transition-all ${
-            isCalibrating
-              ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
-              : 'bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border-white/10'
-          }`}
-          title="Calibrate Accelerometer & Reset Level"
-        >
-          <RotateCcw className={`w-3 h-3 ${isCalibrating ? 'animate-spin' : ''}`} />
-          <span>{isCalibrating ? 'CALIBRATING...' : 'CALIBRATE ACC'}</span>
-        </button>
+        <div className="flex items-center gap-1.5 text-[9px] font-mono text-zinc-400 bg-black/60 px-2 py-0.5 rounded border border-white/10">
+          <Crosshair className="w-3 h-3 text-cyan-400" />
+          <span>DRAG 3D MODEL TO ORBIT</span>
+        </div>
       </div>
     </div>
   );

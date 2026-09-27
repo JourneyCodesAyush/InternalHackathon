@@ -6,7 +6,7 @@ import { ArrowLeft } from 'lucide-react';
 import MspPanel from './_components/MspPanel';
 import SimulationMap from './_components/SimulationMap';
 import WebcamHaze from './_components/WebcamHaze';
-import Attitude3D from './_components/Attitude3D';
+import Instruments from './_components/Instruments';
 
 export default function DronePortalPage() {
   const [isSimulating, setIsSimulating] = useState(false);
@@ -72,10 +72,7 @@ export default function DronePortalPage() {
             />
           </section>
 
-          <section className="bg-white/5 border border-white/10 rounded-xl p-5 shadow-lg backdrop-blur-sm">
-            <h2 className="text-sm font-semibold text-white/60 uppercase tracking-widest mb-4">IMU Attitude & Leveling (3D)</h2>
-            <Attitude3D isSimulating={isSimulating} />
-          </section>
+          <Instruments />
 
           <section className="bg-white/5 border border-white/10 rounded-xl p-5 shadow-lg backdrop-blur-sm">
             <h2 className="text-sm font-semibold text-white/60 uppercase tracking-widest mb-4">Onboard Camera (DCP Haze)</h2>

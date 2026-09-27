@@ -5,19 +5,192 @@ import xarray as xr
 
 RUNS_ROOT = Path(os.environ.get("ML_ENGINE_RUNS_DIR", "outputs/runs"))
 
+import glob
+import serial
+import struct
+import threading
+import time
+
+CARDINAL_POINTS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+
+class DroneHardwareLink:
+    """
+    Manages persistent serial connection to the Flight Controller (FC)
+    using a dedicated background streaming thread and MSP state-machine parser.
+    """
+    _lock = threading.Lock()
+    _thread: threading.Thread | None = None
+    _running = False
+    _cached_attitude = {
+        "connected": False,
+        "roll": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "heading": 0,
+        "cardinal": "N",
+        "mag": {"x": 0, "y": 0, "z": 0, "total": 0, "detected": False},
+        "mag_available": False,
+        "timestamp": 0.0
+    }
+
+    @classmethod
+    def _ensure_worker_running(cls):
+        with cls._lock:
+            if cls._thread is None or not cls._thread.is_alive():
+                cls._running = True
+                cls._thread = threading.Thread(target=cls._worker_loop, daemon=True)
+                cls._thread.start()
+
+    @classmethod
+    def _worker_loop(cls):
+        while cls._running:
+            ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+            if not ports:
+                with cls._lock:
+                    cls._cached_attitude["connected"] = False
+                    cls._cached_attitude["mag_available"] = False
+                time.sleep(0.5)
+                continue
+
+            port = ports[0]
+            ser = None
+            try:
+                ser = serial.Serial(port, 115200, timeout=0.04)
+                # MSP Parser state machine
+                state = 0
+                size = 0
+                cmd = 0
+                payload = bytearray()
+                crc = 0
+
+                while cls._running:
+                    # Request MSP_ATTITUDE (cmd 108 / 0x6c)
+                    ser.write(b'\x24\x4d\x3c\x00\x6c\x6c')
+                    time.sleep(0.015)
+
+                    avail = ser.in_waiting
+                    if avail:
+                        chunk = ser.read(avail)
+                        for b in chunk:
+                            if state == 0:
+                                if b == ord('$'): state = 1
+                            elif state == 1:
+                                state = 2 if b == ord('M') else 0
+                            elif state == 2:
+                                state = 3 if b == ord('>') else 0
+                            elif state == 3:
+                                size = b; crc = b; state = 4
+                            elif state == 4:
+                                cmd = b; crc ^= b; payload = bytearray()
+                                state = 6 if size == 0 else 5
+                            elif state == 5:
+                                payload.append(b); crc ^= b
+                                if len(payload) == size: state = 6
+                            elif state == 6:
+                                state = 0
+                                if crc == b and cmd == 108 and len(payload) == 6:
+                                    r_raw, p_raw, y_deg = struct.unpack('<hhh', payload)
+                                    now = time.time()
+                                    norm_heading = int((-y_deg % 360 + 360) % 360)
+                                    cardinal_idx = int((norm_heading + 11.25) / 22.5) % 16
+                                    cardinal = CARDINAL_POINTS[cardinal_idx]
+
+                                    with cls._lock:
+                                        cls._cached_attitude = {
+                                            "connected": True,
+                                            "roll": round(r_raw / 10.0, 1),
+                                            "pitch": round(p_raw / 10.0, 1),
+                                            "yaw": y_deg,
+                                            "heading": norm_heading,
+                                            "cardinal": cardinal,
+                                            "mag": {"x": 0, "y": 0, "z": 0, "total": 0, "detected": True},
+                                            "mag_available": True,
+                                            "timestamp": now
+                                        }
+
+                    time.sleep(0.015)
+            except Exception:
+                with cls._lock:
+                    cls._cached_attitude["connected"] = False
+                    cls._cached_attitude["mag_available"] = False
+                if ser:
+                    try:
+                        ser.close()
+                    except Exception:
+                        pass
+                time.sleep(0.5)
+
+    @classmethod
+    def get_attitude(cls) -> dict:
+        cls._ensure_worker_running()
+        with cls._lock:
+            # If data is stale (> 1.2s without update), mark disconnected
+            if time.time() - cls._cached_attitude.get("timestamp", 0) > 1.2:
+                cls._cached_attitude["connected"] = False
+            return dict(cls._cached_attitude)
+
+    @classmethod
+    def calibrate_acc(cls) -> bool:
+        """
+        Sends MSP_ACC_CALIBRATION (cmd 205) to calibrate the FC onboard accelerometer.
+        """
+        with cls._lock:
+            ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+            if not ports:
+                return False
+            try:
+                if cls._ser is None or not cls._ser.is_open:
+                    cls._ser = serial.Serial(ports[0], 115200, timeout=0.1)
+                # MSP_ACC_CALIBRATION packet: $M< + len(0) + cmd(205/0xcd) + crc(0xcd)
+                cls._ser.write(b'\x24\x4d\x3c\x00\xcd\xcd')
+                time.sleep(0.05)
+                return True
+            except Exception:
+                return False
+
+    @classmethod
+    def calibrate_mag(cls) -> bool:
+        """
+        Sends MSP_MAG_CALIBRATION (cmd 206) to start FC magnetometer 3D calibration.
+        """
+        with cls._lock:
+            ports = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+            if not ports:
+                return False
+            try:
+                if cls._ser is None or not cls._ser.is_open:
+                    cls._ser = serial.Serial(ports[0], 115200, timeout=0.1)
+                # MSP_MAG_CALIBRATION packet: $M< + len(0) + cmd(206/0xce) + crc(0xce)
+                cls._ser.write(b'\x24\x4d\x3c\x00\xce\xce')
+                time.sleep(0.05)
+                return True
+            except Exception:
+                return False
+
 def check_msp_connection() -> bool:
     """
-    Attempts to connect to the SpeedyBee FC via MSP over USB.
-    Returns True if successful, False otherwise.
+    Returns True if an FC is connected on /dev/ttyACM* or /dev/ttyUSB*, False otherwise.
     """
-    try:
-        import glob
-        # The FC might enumerate as ttyACM1 or ttyACM2 if unplugged without closing
-        ports = glob.glob("/dev/ttyACM*")
-        return len(ports) > 0
-    except Exception as e:
-        # Will fail if /dev/ttyACM0 doesn't exist or no permission
-        return False
+    attitude = DroneHardwareLink.get_attitude()
+    return attitude["connected"]
+
+def get_drone_attitude() -> dict:
+    """
+    Returns the real-time gyro/accelerometer attitude and magnetometer heading from the FC.
+    """
+    return DroneHardwareLink.get_attitude()
+
+def calibrate_drone_acc() -> bool:
+    """
+    Triggers hardware accelerometer calibration on the FC.
+    """
+    return DroneHardwareLink.calibrate_acc()
+
+def calibrate_drone_mag() -> bool:
+    """
+    Triggers hardware magnetometer calibration on the FC.
+    """
+    return DroneHardwareLink.calibrate_mag()
 
 def get_cloud_covered_zones() -> list[dict]:
     """
