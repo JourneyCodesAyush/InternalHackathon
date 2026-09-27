@@ -23,7 +23,7 @@ from pathlib import Path
 
 import httpx
 
-from .texts import LANGUAGES
+from .texts import LANGUAGES, fmt_date, fmt_people
 
 log = logging.getLogger(__name__)
 
@@ -61,11 +61,12 @@ def _setting(name: str, default: str | None = None) -> str | None:
     return value or default
 
 
-def compact_facts(facts: dict) -> dict:
-    """The subset of facts the model needs, rounded, without arrays or large objects."""
+def compact_facts(facts: dict, lang: str = "en") -> dict:
+    """The subset of facts the model needs, rounded, without arrays or large objects. Dates and people
+    counts also come pre-formatted for the report language (e.g. "31 दिसंबर 2025", "2.2 करोड़")."""
     cur, pop, fc, tr = facts["current"], facts.get("population"), facts["forecast"], facts.get("trend")
     return {
-        "area": facts["area"]["name"], "date": facts["date"],
+        "area": facts["area"]["name"], "date": facts["date"], "date_display": fmt_date(facts["date"], lang),
         "standards_ugm3": {"cpcb_naaqs_24h": 80, "cpcb_naaqs_annual": 40, "who_24h": 25, "hazardous_above": 180},
         "status": cur["status"], "area_band": cur["band"],
         "area_average_ugm3": round(cur["mean"]), "percent_vs_24h_standard": round(cur["pct_vs_naaqs"]),
@@ -76,7 +77,8 @@ def compact_facts(facts: dict) -> dict:
         "hotspots": [{"near": h["near"], "no2_ugm3": round(h["value"]), "likely_sources": h["sources"]}
                      for h in facts["hotspots"]],
         "population": None if not pop else {
-            "total": pop["total"], "people_above_80": pop["above_naaqs"],
+            "total": pop["total"], "total_display": fmt_people(pop["total"], lang),
+            "people_above_80": pop["above_naaqs"], "people_above_80_display": fmt_people(pop["above_naaqs"], lang),
             "percent_people_above_80": round(pop["share_above_naaqs"] * 100),
             "population_weighted_average_ugm3": round(pop["weighted_mean"])},
         "forecast_alerts": [{"type": a["code"], "within_hours": a["hours"], "percent_area": round(a["share"] * 100)}
@@ -95,7 +97,8 @@ def _prompt(cf: dict, lang: str) -> tuple[str, str]:
         "You are an environmental data analyst writing an official air-quality report for Indian government "
         f"officials and researchers. Write in {language}. Use ONLY the facts given as JSON: never invent numbers, "
         "places, dates or pollution sources, and never state a number that is not in the facts. Write numbers "
-        "with Western digits (0-9). Plain, formal language; no markdown, no bullet symbols."
+        "with Western digits (0-9). Write dates and population counts exactly as the *_display fields give them. "
+        "Plain, formal language; no markdown, no bullet symbols."
     )
     user = (
         "Facts (JSON):\n" + json.dumps(cf, ensure_ascii=False) + "\n\n"
@@ -178,7 +181,7 @@ def generate_narrative(facts: dict, lang: str, api_key: str | None = None) -> di
         return None
     model = _setting("GEMINI_MODEL", DEFAULT_MODEL)
     daily_limit = int(_setting("GEMINI_DAILY_LIMIT", str(DEFAULT_DAILY_LIMIT)))
-    cf = compact_facts(facts)
+    cf = compact_facts(facts, lang)
     key = hashlib.sha1(json.dumps([cf, lang, model], sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:20]
     cache_file = CACHE_DIR / f"{key}.json"
     with _lock:
