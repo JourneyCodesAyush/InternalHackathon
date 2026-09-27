@@ -391,12 +391,12 @@ export default function Sidebar({
               Pipeline Specifications
             </div>
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Accepts Level-2 / Level-3 TROPOMI products in NetCDF (.nc), GeoTIFF (.tif), HDF5, or imagery bands (.png, .jpg).
+              Accepts daily Sentinel-5P NO₂ GeoTIFFs (µmol/m², EPSG:4326, date in the file name), at least 7 days of one area.
             </p>
             <ul className="text-[11px] text-zinc-400 space-y-1 list-disc list-inside">
-              <li>Cloud Gap Imputation: R² &gt; 0.85</li>
-              <li>Spatial Resolution: 7km → 1km</li>
-              <li>Auxiliary inputs: ERA5, DEM</li>
+              <li>Cloud gap-filling: Random Forest (R² ≈ 0.9)</li>
+              <li>Spatial resolution: ~3.7 km → 250 m</li>
+              <li>Inputs: ERA5, DEM, Sentinel-2, land use, roads</li>
             </ul>
           </div>
         )}
