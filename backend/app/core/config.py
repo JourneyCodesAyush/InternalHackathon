@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     EE_PROJECT: str | None = None
     # Reports: optional Gemini key for the narrative sections (read by ml_engine.report from .env too).
     GEMINI_API_KEY: str | None = None
+    # Local demo only: let requests from this machine use the app without logging in (never enable on a server).
+    LOCAL_DEMO_MODE: bool = False
 
     # "ignore" lets backend/.env also hold variables used by other tools (e.g. OPENAQ_API_KEY).
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
