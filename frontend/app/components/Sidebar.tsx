@@ -16,7 +16,6 @@ import {
   Sparkles,
 } from 'lucide-react';
 import HazardLegend from './HazardLegend';
-import ReportGenerator from './ReportGenerator';
 import { PRESET_REGIONS } from '@/lib/constants';
 
 interface SidebarProps {
@@ -236,9 +235,6 @@ export default function Sidebar({
             <div>
               <HazardLegend />
             </div>
-
-            {/* Area report (PDF, English / Hindi / Marathi) */}
-            <ReportGenerator locationName={selectedLocationName} coords={selectedCoords} />
           </>
         )}
 

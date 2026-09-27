@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Layers, ChevronDown } from 'lucide-react';
+import { Layers, ChevronDown, Bot, Sparkles } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import MapView from './components/MapView';
 import LocationSearch from './components/LocationSearch';
 import TrendPanel from './components/TrendPanel';
+import ReportGenerator from './components/ReportGenerator';
 import { calculateAttribution, PRESET_REGIONS } from '@/lib/constants';
 import { PinpointAttributionResult } from '@/lib/types';
 
@@ -17,6 +18,7 @@ export default function HomePage() {
   const [timeOffsetHours, setTimeOffsetHours] = useState<number>(0);
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('roadmap');
   const [isMapTypeOpen, setIsMapTypeOpen] = useState<boolean>(false);
+  const [isReportOpen, setIsReportOpen] = useState<boolean>(false);
   const mapTypeDropdownRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -97,8 +99,27 @@ export default function HomePage() {
 
       {/* Main Map Canvas Area */}
       <main className="relative flex-1 h-full w-full overflow-hidden">
-        {/* Floating Top Bar: Location Search, Status Pill & Map Type Dropdown */}
+        {/* Floating Top Bar: Immediately to the right of the left slider at the top */}
         <div className="absolute top-4 left-4 z-30 flex items-center gap-2.5">
+          {/* AI Bot Agent Icon - outside the left slider, to its right at the top */}
+          <button
+            id="ai-agent-bot-icon"
+            onClick={() => setIsReportOpen(!isReportOpen)}
+            className={`relative w-10 h-10 rounded-lg flex items-center justify-center shadow-xl backdrop-blur-md transition-all cursor-pointer select-none shrink-0 group border ${
+              isReportOpen
+                ? 'bg-blue-600/35 border-blue-400 text-white shadow-blue-500/30 ring-2 ring-blue-400/50'
+                : 'bg-[#141721]/95 border-[#2e3547] hover:border-blue-400/80 hover:bg-[#1c2233] text-blue-400 hover:text-blue-300'
+            }`}
+            title="AeroPulse AI Agent (Chat, Analyse & PDF)"
+            aria-label="AeroPulse AI Agent"
+          >
+            <Bot className="w-5 h-5 transition-transform group-hover:scale-110" />
+            <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 border border-[#141721]"></span>
+            </span>
+          </button>
+
           <LocationSearch
             onSelectLocation={handleSelectLocation}
             selectedLocationName={selectedLocationName}
@@ -179,6 +200,14 @@ export default function HomePage() {
             onTimeSliderChange={(offset) => setTimeOffsetHours(offset)}
           />
         )}
+
+        {/* Area Air Quality Report Agent (Analyse & PDF) Modal */}
+        <ReportGenerator
+          isOpen={isReportOpen}
+          onClose={() => setIsReportOpen(false)}
+          locationName={selectedLocationName}
+          coords={selectedCoords}
+        />
       </main>
     </div>
   );
