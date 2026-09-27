@@ -122,6 +122,51 @@ the ground-level values capture **trends and hotspots** but single station-days 
 (the SRS target of R² ≥ 0.6 is not met — ground-station data is sparse and inconsistent between networks).
 Validation is leakage-free: models are always scored on stations *and* dates excluded from training.
 
+## Area reports (PDF — English, Hindi, Marathi)
+
+`ml_engine.report` turns a run into a formal report for officials and researchers. Every number is
+computed in code (`report/analysis.py`); the language model only phrases them.
+
+| Section | Content |
+|---|---|
+| Status | Normal / Elevated / Critical / Critical Spike from the SRS bands and the CPCB 24 h standard (80 µg/m³) |
+| Comparison with standards | Area average, 95th percentile, highest cell and share of area vs CPCB NAAQS (80 / 40) and WHO (25) |
+| Map and hotspots | 250 m map with the top 3 hotspots, named after the nearest CPCB station, with likely contributors (roads, power plants, dense activity) |
+| Population exposure | People living in each hazard band (GHSL), population-weighted average |
+| Forecast alerts | +3/+6/+12/+24 h from the dispersion solver: exceedance expected / persisting / improving |
+| Weather-adjusted trend | 30-day series with the weather effect removed (ridge regression on boundary layer, wind, temperature, rain) |
+| Risk context, recommendations | Gemini narrative when available, otherwise built-in templates |
+| Method and limitations | Data sources, accuracy (R² 0.23 on unseen cities, ±23 µg/m³) |
+
+```python
+from ml_engine.report import generate_report
+pdf_bytes, meta = generate_report(city="Mumbai", date="2025-12-31", language="hi")   # or bbox=(...)
+```
+
+API: `POST /api/v1/reports/generate` with `region_name, bbox, start_date, end_date, language (en|hi|mr),
+use_ai, city` streams the PDF; headers `X-Report-Status`, `X-Report-Narrative` (ai/template),
+`X-Report-Language`, `X-Report-Notice` (empty/cached/unavailable). `POST /api/v1/reports/analysis` (same body)
+returns the same analysis as JSON (no Gemini call); the frontend's **Area Air Quality Report** card (sidebar)
+shows it on screen (**Analyse**) and downloads the PDF (**PDF report**).
+
+**A report is always produced.** If the fresh run fails (Earth Engine quota, not configured, outage) or takes
+longer than `REPORT_RUN_WAIT_S` (default 5 s; the run then continues in the background and is cached), the
+report uses the latest stored model map covering the area and says so in a notice. With no stored map, the
+PDF gives the standards, hazard bands and health guidance. A section that fails on its own (forecast, trend,
+hotspots, population, map figure) is left out, and a Gemini failure falls back to the templates.
+Reports come back within `REPORT_TIME_BUDGET_S` (default 15 s): analyses are cached per run and date, and
+Gemini only gets the time left (else templates). Dates later than today − 6 days are moved back to that day
+(ERA5-Land weather is published ~6 days late).
+
+**Gemini (optional):** set `GEMINI_API_KEY` in `backend/.env` (free key from Google AI Studio). One call per
+report, cached on disk (`cache/report_llm/`), at most `GEMINI_DAILY_LIMIT` calls a day (default 40), a
+2-minute pause after a quota error, and a fact check: any AI sentence containing a number that is not in
+the computed facts is replaced by the template. Without a key the report is complete from templates.
+
+**Hindi/Marathi fonts:** a Devanagari TrueType font is needed on the server. Found automatically on
+Windows (Nirmala UI) and on Linux with `fonts-noto` / Lohit installed; otherwise set
+`REPORT_FONT_REGULAR` / `REPORT_FONT_BOLD` to font files. Without one, reports fall back to English.
+
 ## Tests
 
 ```bash

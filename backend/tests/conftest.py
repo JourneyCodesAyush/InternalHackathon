@@ -33,6 +33,15 @@ FAKE_ADMIN_USER = {
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_local_demo_mode():
+    """Tests see the default (off) even when a developer's backend/.env turns LOCAL_DEMO_MODE on."""
+    from app.core.config import settings
+
+    with patch.object(settings, "LOCAL_DEMO_MODE", False):
+        yield
+
+
 @pytest_asyncio.fixture
 async def client():
     """Return an AsyncClient wired to the FastAPI app via ASGI transport."""

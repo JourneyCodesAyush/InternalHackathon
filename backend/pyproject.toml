@@ -25,11 +25,11 @@ dependencies = [
     "rioxarray>=0.23.0",
     "scikit-learn>=1.9.1",
     "scipy>=1.18.1",
-    "truststore>=0.10.4",
     "xarray>=2026.7.0",
     "xgboost>=3.4.1",
     "torch>=2.2.0",
     "tensorboard>=2.16.0",
+    "uharfbuzz>=0.56.2",
 ]
 
 [dependency-groups]

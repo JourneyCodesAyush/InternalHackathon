@@ -36,6 +36,8 @@ RUNS_ROOT = Path(os.environ.get("ML_ENGINE_RUNS_DIR", "outputs/runs"))
 WINDOW_DAYS = 30  # history the gap-filler and downscaler learn from for each requested date
 OFFL_LAG_DAYS = 12  # reprocessed S5P lags ~10 days; newer dates use the near-real-time product
 POINT_HALF_SIZE_DEG = 0.12  # forecast area around a point that falls outside every known city
+RUN_FORMAT = 3  # bump when run outputs change (2: static_fine.nc for reports; 3: fixed Sentinel-2 layers)
+WEATHER_LAG_DAYS = 6  # ERA5-Land weather reaches Earth Engine ~5-6 days late; newer dates cannot be mapped
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 
@@ -45,10 +47,21 @@ def _lock_for(key: str) -> threading.Lock:
         return _locks.setdefault(key, threading.Lock())
 
 
+def latest_date() -> pd.Timestamp:
+    """Most recent day with complete inputs (weather is the last to arrive)."""
+    return pd.Timestamp.today().normalize() - timedelta(days=WEATHER_LAG_DAYS)
+
+
 def _parse_date(value: str | date_cls | None) -> pd.Timestamp:
+    """Requested day, moved back to ``latest_date()`` when its weather data is not published yet."""
     if value is None:
-        return pd.Timestamp.today().normalize() - timedelta(days=1)
-    return pd.Timestamp(value).tz_localize(None).normalize() if pd.Timestamp(value).tzinfo else pd.Timestamp(value).normalize()
+        return latest_date()
+    ts = pd.Timestamp(value)
+    day = (ts.tz_localize(None) if ts.tzinfo else ts).normalize()
+    if day > latest_date():
+        log.info("No weather data for %s yet; using %s", day.date(), latest_date().date())
+        return latest_date()
+    return day
 
 
 def _run(bbox: tuple[float, float, float, float], day: pd.Timestamp, ee_project: str | None,
@@ -58,7 +71,7 @@ def _run(bbox: tuple[float, float, float, float], day: pd.Timestamp, ee_project:
     product = "OFFL" if (pd.Timestamp.today().normalize() - day).days > OFFL_LAG_DAYS else "NRTI"
     bbox = tuple(round(float(v), 3) for v in bbox)
     model_tag = PRETRAINED_SURFACE_MODEL.stat().st_mtime_ns if PRETRAINED_SURFACE_MODEL.exists() else 0
-    key = hashlib.sha1(json.dumps([bbox, str(start.date()), str(day.date()), product, source, model_tag,
+    key = hashlib.sha1(json.dumps([RUN_FORMAT, bbox, str(start.date()), str(day.date()), product, source, model_tag,
                                    stations_csv]).encode()).hexdigest()[:16]
     run_dir = RUNS_ROOT / key
     with _lock_for(key):
@@ -71,6 +84,29 @@ def _run(bbox: tuple[float, float, float, float], day: pd.Timestamp, ee_project:
         log.info("ML engine run %s: bbox=%s %s..%s (%s)", key, bbox, start.date(), day.date(), product)
         NO2Pipeline(cfg).run(source=source, stations_csv=stations_csv, ee_project=ee_project)
     return run_dir
+
+
+def cached_runs(bbox: tuple[float, float, float, float], day: pd.Timestamp,
+                min_overlap: float = 0.5) -> list[tuple[Path, str]]:
+    """Stored runs covering at least ``min_overlap`` of ``bbox``, best first, each with the day to use:
+    runs whose window contains ``day`` first, then the runs whose last day is closest to it."""
+    w, s, e, n = bbox
+    area = (e - w) * (n - s)
+    found = []
+    for report in RUNS_ROOT.glob("*/report.json") if area > 0 else []:
+        try:
+            cfg = json.loads(report.read_text())["config"]
+            rw, rs, re_, rn = cfg["bbox"]
+            start, end = pd.Timestamp(cfg["start_date"]), pd.Timestamp(cfg["end_date"])
+        except (OSError, KeyError, TypeError, ValueError):
+            continue
+        overlap = max(0.0, min(e, re_) - max(w, rw)) * max(0.0, min(n, rn) - max(s, rs)) / area
+        if overlap < min_overlap:
+            continue
+        use = min(max(day, start), end)
+        found.append((0 if use == day else 1, abs((use - day).days), -overlap, report.parent, str(use.date())))
+    found.sort(key=lambda f: f[:3])
+    return [(run_dir, use) for *_, run_dir, use in found]
 
 
 def generate_map(bbox: tuple[float, float, float, float] | None = None, date: str | date_cls | None = None,

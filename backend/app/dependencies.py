@@ -1,13 +1,24 @@
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 
-from app.core.config import get_supabase
+from app.core.config import get_supabase, settings
 from app.core.security import decode_supabase_jwt
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+# auto_error=False so a missing token can fall through to local demo mode; otherwise it is still a 401.
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+
+LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+DEMO_USER = {
+    "id": "local-demo",
+    "email": "demo@localhost",
+    "full_name": "Local demo user",
+    "role": "NORMAL_USER",  # never admin: admin endpoints stay protected
+    "is_blocked": False,
+    "created_at": None,
+}
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+async def get_current_user(request: Request, token: str | None = Depends(oauth2_scheme)) -> dict:
     """
     Resolve the current authenticated user from a Bearer JWT.
 
@@ -23,7 +34,17 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     Raises:
         HTTPException(401): If the token is invalid or the user is not found.
         HTTPException(403): If the account is blocked.
+
+    Local demo mode: when ``LOCAL_DEMO_MODE=true`` is set in backend/.env, a request WITHOUT a token that
+    comes from this machine (localhost) is treated as a normal (non-admin) demo user, so the web app can
+    be tried without Supabase login. Off by default; requests from other machines always need a token.
     """
+    if not token:
+        client_host = request.client.host if request.client else ""
+        if settings.LOCAL_DEMO_MODE and client_host in LOCAL_HOSTS:
+            return DEMO_USER
+        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
+
     payload = decode_supabase_jwt(token)
     user_id: str = payload.get("sub", "")
 

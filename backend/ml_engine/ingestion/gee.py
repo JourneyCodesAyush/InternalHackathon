@@ -23,6 +23,7 @@ import pandas as pd
 import xarray as xr
 
 from ..config import COLUMN_SCALE, PipelineConfig
+from ..env import setting
 from ..grid import GridSpec, fill_nan_nearest
 
 log = logging.getLogger(__name__)
@@ -62,7 +63,9 @@ GEOSCF_BLH_BAND = "ZPBL"
 DEM_IMAGE = "NASA/NASADEM_HGT/001"
 S2_COLLECTION = "COPERNICUS/S2_SR_HARMONIZED"
 
-S2_MAX_SCENES = 40
+S2_SCENES_PER_TILE = 8  # clearest complete scenes kept from EACH Sentinel-2 tile touching the area
+S2_MAX_NODATA_PCT = 10  # skip swath-edge scenes that are mostly empty
+S2_MAX_GAP_FRACTION = 0.02  # warn if more of the area than this has no Sentinel-2 data
 VIIRS_COLLECTION = "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG"
 GHSL_BUILT_COLLECTION = "JRC/GHSL/P2023A/GHS_BUILT_S"
 GHSL_POP_COLLECTION = "JRC/GHSL/P2023A/GHS_POP"
@@ -81,6 +84,10 @@ def initialize(project: str | None = None, service_account: str | None = None, k
     # antivirus) whose root CA is trusted by Windows/macOS but absent from certifi still work.
     truststore.inject_into_ssl()
 
+    project = project or setting("EE_PROJECT")
+    if not project:
+        raise RuntimeError("No Earth Engine project configured: set EE_PROJECT in backend/.env "
+                           "(or pass --ee-project)")
     if service_account and key_file:
         credentials = ee.ServiceAccountCredentials(service_account, key_file)
         ee.Initialize(credentials, project=project)
@@ -370,18 +377,24 @@ def fetch_static(grid: GridSpec, end_date: str) -> dict[str, np.ndarray]:
     terrain_arr = _compute_pixels(terrain, grid, ["elevation", "slope"])
 
     end = pd.Timestamp(end_date)
-    s2 = (
+    candidates = (
         ee.ImageCollection(S2_COLLECTION)
         .filterBounds(region)
         .filterDate((end - timedelta(days=365)).strftime("%Y-%m-%d"), (end + timedelta(days=1)).strftime("%Y-%m-%d"))
         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
-        .select(["B4", "B8", "B11", "SCL"])
-        # The clearest scenes are plenty for a land-cover composite and keep the median cheap.
-        .sort("CLOUDY_PIXEL_PERCENTAGE")
-        .limit(S2_MAX_SCENES)
+        .filter(ee.Filter.lt("NODATA_PIXEL_PERCENTAGE", S2_MAX_NODATA_PCT))
     )
-    if s2.size().getInfo() == 0:
-        raise RuntimeError("No Sentinel-2 scenes with <20% cloud in the 12 months before end_date")
+    # Pick the clearest scenes per MGRS tile: a single global "clearest N" can come entirely from a
+    # neighbouring tile that only clips the area, leaving most of it without data.
+    tiles = candidates.aggregate_array("MGRS_TILE").distinct().getInfo()
+    if not tiles:
+        raise RuntimeError("No complete Sentinel-2 scenes with <20% cloud in the 12 months before end_date")
+    s2 = ee.ImageCollection([])
+    for tile in tiles:
+        s2 = s2.merge(candidates.filter(ee.Filter.eq("MGRS_TILE", tile)).sort("CLOUDY_PIXEL_PERCENTAGE")
+                      .limit(S2_SCENES_PER_TILE))
+    s2 = s2.select(["B4", "B8", "B11", "SCL"])
+    log.info("Sentinel-2 composite from %d tiles: %s", len(tiles), ", ".join(sorted(tiles)))
 
     def indices(img):
         scl = img.select("SCL")
@@ -404,6 +417,10 @@ def fetch_static(grid: GridSpec, end_date: str) -> dict[str, np.ndarray]:
     activity_arr = _compute_pixels(_activity_image(grid, end).addBands(road_density_image(grid)), grid,
                                    [*ACTIVITY_BANDS, "road_density"])
 
+    gaps = float(np.isnan(s2_arr[0]).mean())
+    if gaps > S2_MAX_GAP_FRACTION:
+        log.warning("Sentinel-2 composite leaves %.0f%% of the area without data; vegetation / built-up there "
+                    "are filled from the nearest pixel", 100 * gaps)
     names = ["elevation", "slope", "ndvi", "built_up", *ACTIVITY_BANDS, "road_density"]
     arr = np.concatenate([terrain_arr, s2_arr, activity_arr], axis=0)
     static = {n: fill_nan_nearest(arr[i]) for i, n in enumerate(names)}
@@ -483,7 +500,7 @@ def _activity_image(grid: GridSpec, end: pd.Timestamp):
 # Orchestration
 # --------------------------------------------------------------------------------------------------
 def load_gee(cfg: PipelineConfig, coarse: GridSpec, fine: GridSpec,
-             no2: np.ndarray | None = None) -> tuple[xr.Dataset, xr.Dataset]:
+             no2: np.ndarray | None = None, with_static: bool = True):
     """Return (coarse daily dataset, fine static dataset) for the configured AOI and period.
 
     ``no2`` (time, y, x in umol/m^2) replaces the Sentinel-5P download, e.g. with local GeoTIFFs.
@@ -516,14 +533,18 @@ def load_gee(cfg: PipelineConfig, coarse: GridSpec, fine: GridSpec,
         coords=coords,
         attrs={"crs": coarse.crs, "source": "gee", "grid": str(coarse.to_dict())},
     )
+    return (coarse_ds, load_static(cfg, fine)) if with_static else coarse_ds
+
+
+def load_static(cfg: PipelineConfig, fine: GridSpec) -> xr.Dataset:
+    """Fine-grid land use, terrain, activity and power-plant layers for the area."""
     static = fetch_static(fine, cfg.end_date)
     static["power_plants"] = fetch_power_plants(fine)
-    static_ds = xr.Dataset(
+    return xr.Dataset(
         {k: (("y", "x"), v.astype(np.float32)) for k, v in static.items()},
         coords={"y": fine.y, "x": fine.x},
         attrs={"crs": fine.crs, "source": "gee", "grid": str(fine.to_dict())},
     )
-    return coarse_ds, static_ds
 
 
 def _chunks(dates: pd.DatetimeIndex, size: int):
