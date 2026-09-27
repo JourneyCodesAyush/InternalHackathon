@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from ml_engine.service import RUNS_ROOT
@@ -29,6 +30,9 @@ app.add_middleware(
     expose_headers=["Content-Disposition", "X-Report-Status", "X-Report-Narrative", "X-Report-Language",
                     "X-Report-Notice"],
 )
+
+# compress JSON responses (the global NO2 grid is ~2.8 MB of base64 before compression)
+app.add_middleware(GZipMiddleware, minimum_size=4096)
 
 app.include_router(v1_router, prefix="/api/v1")
 

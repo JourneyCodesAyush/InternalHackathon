@@ -178,3 +178,22 @@ uv run pytest ml_engine/tests -q
 - Boundary-layer height after 2 Jan 2026 comes from a bulk estimate (less accurate ground-level values).
 - Earth Engine's free tier has a monthly compute quota; large new areas/periods can hit "restricted mode".
 - Outside India the road layer is missing and the ground-level model is untrained.
+
+## Presenting without Earth Engine (quota-proof demos)
+
+The free Earth Engine tier has a monthly compute quota; when it runs out the project goes into "restricted
+mode" (low priority, requests may be slow or refused). For a presentation, prepare everything the day before
+and switch the app to offline mode:
+
+```bash
+# 1. the day before: full runs, all languages, Gemini narratives, global snapshot (uses quota once)
+uv run python -m ml_engine.prewarm --globe --ai --report Mumbai:2025-12-31 --report Delhi:2025-12-31
+# 2. check everything is stored
+uv run python -m ml_engine.prewarm --check --globe --report Mumbai:2025-12-31 --report Delhi:2025-12-31
+# 3. before presenting: add ML_ENGINE_OFFLINE=true to backend/.env (read per request, no restart)
+```
+
+In offline mode nothing calls Earth Engine or Gemini: prepared reports come back in ~2-3 s, other dates use the
+nearest stored map with a notice, unprepared areas get the standards-and-guidance document, and the globe
+shows the stored snapshot labelled "live updates paused". Reports select areas by city name, so prepare the
+cities you will click on the map.

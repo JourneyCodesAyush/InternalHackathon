@@ -17,3 +17,9 @@ def setting(name: str, default: str | None = None) -> str | None:
 
         value = dotenv_values(ENV_FILE).get(name)
     return value or default
+
+
+def offline() -> bool:
+    """``ML_ENGINE_OFFLINE=true``: never call Earth Engine (e.g. during a presentation). Everything is served
+    from stored results: pre-computed runs for reports, the last global snapshot for the globe."""
+    return (setting("ML_ENGINE_OFFLINE", "false") or "").strip().lower() in ("1", "true", "yes", "on")

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Map as MapIcon,
+  Globe2,
   UploadCloud,
   Layers,
   Wind,
@@ -93,6 +94,17 @@ export default function Sidebar({
         >
           <UploadCloud className="w-4 h-4" />
           Model Upload & Clean
+        </Link>
+        <Link
+          href="/globe"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium transition-colors ${
+            pathname === '/globe'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1b202e]'
+          }`}
+        >
+          <Globe2 className="w-4 h-4" />
+          Global NO₂ Globe
         </Link>
       </nav>
 
@@ -238,7 +250,7 @@ export default function Sidebar({
           </>
         )}
 
-        {!isMapPage && (
+        {pathname === '/upload' && (
           <div className="p-3 rounded bg-[#161a26] border border-[#242938] text-xs space-y-2">
             <div className="font-semibold text-zinc-300 flex items-center gap-1.5">
               <Cpu className="w-4 h-4 text-blue-400" />

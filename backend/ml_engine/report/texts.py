@@ -490,15 +490,18 @@ REASON = {
     "en": {"processing": "new satellite data is still being processed; it continues in the background",
            "quota": "satellite data service usage limit reached", "config": "satellite data service not configured",
            "network": "satellite data service could not be reached",
-           "no_data": "no satellite data available for these dates", "error": "processing error"},
+           "no_data": "no satellite data available for these dates", "error": "processing error",
+           "offline": "live satellite updates are paused"},
     "hi": {"processing": "नया उपग्रह डेटा अभी संसाधित हो रहा है; यह पृष्ठभूमि में जारी है",
            "quota": "उपग्रह डेटा सेवा की उपयोग सीमा पूरी हो गई", "config": "उपग्रह डेटा सेवा कॉन्फ़िगर नहीं है",
            "network": "उपग्रह डेटा सेवा से संपर्क नहीं हो सका",
-           "no_data": "इन तिथियों के लिए उपग्रह डेटा उपलब्ध नहीं है", "error": "प्रसंस्करण त्रुटि"},
+           "no_data": "इन तिथियों के लिए उपग्रह डेटा उपलब्ध नहीं है", "error": "प्रसंस्करण त्रुटि",
+           "offline": "लाइव उपग्रह अपडेट रोके गए हैं"},
     "mr": {"processing": "नवीन उपग्रह डेटावर अजून प्रक्रिया सुरू आहे; ती पार्श्वभूमीत चालू राहील",
            "quota": "उपग्रह डेटा सेवेची वापर मर्यादा संपली", "config": "उपग्रह डेटा सेवा कॉन्फिगर केलेली नाही",
            "network": "उपग्रह डेटा सेवेशी संपर्क होऊ शकला नाही",
-           "no_data": "या तारखांसाठी उपग्रह डेटा उपलब्ध नाही", "error": "प्रक्रिया त्रुटी"},
+           "no_data": "या तारखांसाठी उपग्रह डेटा उपलब्ध नाही", "error": "प्रक्रिया त्रुटी",
+           "offline": "थेट उपग्रह अद्यतने थांबवली आहेत"},
 }
 
 

@@ -23,7 +23,7 @@ from pathlib import Path
 
 import httpx
 
-from ..env import setting
+from ..env import offline, setting
 from .texts import LANGUAGES, fmt_date, fmt_people
 
 log = logging.getLogger(__name__)
@@ -183,6 +183,9 @@ def generate_narrative(facts: dict, lang: str, api_key: str | None = None,
         if cache_file.exists():
             log.info("Gemini narrative from cache (%s)", cache_file.name)
             return json.loads(cache_file.read_text(encoding="utf-8"))
+        if offline():  # presentation mode: cached narratives only, no API calls
+            log.info("Offline mode: no cached narrative for these facts; using template text")
+            return None
         time_left = None if deadline is None else deadline - time.monotonic()
         if not _check_budget(daily_limit, time_left):
             return None

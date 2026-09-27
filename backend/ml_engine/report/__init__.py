@@ -17,7 +17,7 @@ from concurrent.futures import TimeoutError as FutureTimeout
 
 from .. import service
 from ..cities import city_bbox
-from ..env import setting
+from ..env import offline, setting
 from .analysis import analyse_run
 from .llm import generate_narrative
 from .pdf import build_pdf, build_unavailable_pdf, resolve_fonts
@@ -46,6 +46,7 @@ def build_facts(bbox=None, date=None, city=None, area_name=None, ee_project=None
 
 
 _REASONS = (  # technical error text -> reason code, worded per language in texts.REASON (details stay in the log)
+    (("offline mode",), "offline"),
     (("quota", "restricted mode", "too many", "429", "rate limit"), "quota"),
     (("no project", "ee_project", "credentials", "authenticate", "permission"), "config"),
     (("timed out", "timeout", "connection", "unreachable", "ssl"), "network"),
@@ -73,12 +74,18 @@ def gather_facts(bbox=None, date=None, city=None, area_name=None, ee_project=Non
     bbox = city_bbox(city) if city else tuple(bbox)
     day = service._parse_date(date)
     name = area_name or city or "Selected area"
-    try:
-        future = _executor.submit(service._run, bbox, day, ee_project or setting("EE_PROJECT"), source)
-        return analyse_run(future.result(timeout=RUN_WAIT_S), str(day.date()), name), None
-    except Exception as exc:  # noqa: BLE001 - Earth Engine quota/outage, missing data, timeouts
-        log.warning("Fresh run for %s on %s failed (%s); looking for a stored map", bbox, day.date(), exc)
-        reason = _short_reason(exc)
+    if offline() and source == "gee":  # no new runs: go straight to stored maps (no 5 s wait)
+        run_dir = service.stored_run(bbox, day, source)
+        if run_dir is not None:
+            return analyse_run(run_dir, str(day.date()), name), None
+        reason = "offline"
+    else:
+        try:
+            future = _executor.submit(service._run, bbox, day, ee_project or setting("EE_PROJECT"), source)
+            return analyse_run(future.result(timeout=RUN_WAIT_S), str(day.date()), name), None
+        except Exception as exc:  # noqa: BLE001 - Earth Engine quota/outage, missing data, timeouts
+            log.warning("Fresh run for %s on %s failed (%s); looking for a stored map", bbox, day.date(), exc)
+            reason = _short_reason(exc)
     for run_dir, use_day in service.cached_runs(bbox, day):
         try:
             facts = analyse_run(run_dir, use_day, name)

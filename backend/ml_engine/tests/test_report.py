@@ -257,3 +257,25 @@ def test_facts_are_cached_per_run_and_date(runs_root, monkeypatch):
     monkeypatch.setattr(analysis, "_compute_facts", _fail_run)  # must not be needed a second time
     again = build_facts(bbox=SMALL_BBOX, date="2025-11-20", area_name="Second name", source="synthetic")
     assert again["area"]["name"] == "Second name"
+
+
+def test_offline_mode_never_starts_a_run(runs_root, facts, monkeypatch, tmp_path):
+    from ml_engine.ingestion import gee
+
+    monkeypatch.setenv("ML_ENGINE_OFFLINE", "true")
+    monkeypatch.setattr(llm, "CACHE_DIR", tmp_path)
+    monkeypatch.setattr(service, "_run", lambda *a, **k: pytest.fail("offline mode must not start a pipeline run"))
+    with pytest.raises(RuntimeError, match="offline"):
+        gee.initialize("some-project")
+    # a stored run for the day is used as is; another day falls back to it with an "offline" notice
+    monkeypatch.setattr(service, "stored_run", lambda bbox, day, source="gee": None)
+    pdf, meta = generate_report(bbox=SMALL_BBOX, date="2025-11-25", use_ai=False, source="gee")
+    assert pdf[:4] == b"%PDF" and meta["notice"] == "cached"
+    out = analyse_area(bbox=SMALL_BBOX, date="2025-11-25", language="hi", source="gee")
+    assert out["notice"]["reason"] == "offline" and texts.REASON["hi"]["offline"] in out["texts"]["notice"]
+
+
+def test_offline_mode_uses_only_cached_narratives(facts, isolated_llm, monkeypatch):
+    monkeypatch.setenv("ML_ENGINE_OFFLINE", "true")
+    monkeypatch.setattr(llm.httpx, "post", lambda *a, **k: pytest.fail("offline mode must not call Gemini"))
+    assert llm.generate_narrative(facts, "en") is None

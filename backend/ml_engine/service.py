@@ -64,16 +64,29 @@ def _parse_date(value: str | date_cls | None) -> pd.Timestamp:
     return day
 
 
+def _product(day: pd.Timestamp) -> str:
+    return "OFFL" if (pd.Timestamp.today().normalize() - day).days > OFFL_LAG_DAYS else "NRTI"
+
+
+def _run_dir(bbox: tuple[float, float, float, float], day: pd.Timestamp, source: str = "gee",
+             stations_csv: str | None = None) -> Path:
+    """Where the run for this area, day and inputs lives (cache key)."""
+    start = day - timedelta(days=WINDOW_DAYS - 1)
+    bbox = tuple(round(float(v), 3) for v in bbox)
+    model_tag = PRETRAINED_SURFACE_MODEL.stat().st_mtime_ns if PRETRAINED_SURFACE_MODEL.exists() else 0
+    key = hashlib.sha1(json.dumps([RUN_FORMAT, bbox, str(start.date()), str(day.date()), _product(day), source,
+                                   model_tag, stations_csv]).encode()).hexdigest()[:16]
+    return RUNS_ROOT / key
+
+
 def _run(bbox: tuple[float, float, float, float], day: pd.Timestamp, ee_project: str | None,
          source: str = "gee", stations_csv: str | None = None) -> Path:
     """Run (or reuse) the pipeline for the WINDOW_DAYS ending on ``day``; returns the run directory."""
     start = day - timedelta(days=WINDOW_DAYS - 1)
-    product = "OFFL" if (pd.Timestamp.today().normalize() - day).days > OFFL_LAG_DAYS else "NRTI"
+    product = _product(day)
     bbox = tuple(round(float(v), 3) for v in bbox)
-    model_tag = PRETRAINED_SURFACE_MODEL.stat().st_mtime_ns if PRETRAINED_SURFACE_MODEL.exists() else 0
-    key = hashlib.sha1(json.dumps([RUN_FORMAT, bbox, str(start.date()), str(day.date()), product, source, model_tag,
-                                   stations_csv]).encode()).hexdigest()[:16]
-    run_dir = RUNS_ROOT / key
+    run_dir = _run_dir(bbox, day, source, stations_csv)
+    key = run_dir.name
     with _lock_for(key):
         if (run_dir / "report.json").exists():
             return run_dir
@@ -84,6 +97,12 @@ def _run(bbox: tuple[float, float, float, float], day: pd.Timestamp, ee_project:
         log.info("ML engine run %s: bbox=%s %s..%s (%s)", key, bbox, start.date(), day.date(), product)
         NO2Pipeline(cfg).run(source=source, stations_csv=stations_csv, ee_project=ee_project)
     return run_dir
+
+
+def stored_run(bbox: tuple[float, float, float, float], day: pd.Timestamp, source: str = "gee") -> Path | None:
+    """The finished run ``_run`` would use for this area and day, without computing anything."""
+    run_dir = _run_dir(bbox, day, source)
+    return run_dir if (run_dir / "report.json").exists() else None
 
 
 def cached_runs(bbox: tuple[float, float, float, float], day: pd.Timestamp,
