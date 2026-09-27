@@ -50,46 +50,59 @@ body {
   background: var(--border-focus);
 }
 
-/* Leaflet Custom Styles & Overrides */
+/* Google Maps Dark Theme & InfoWindow Overrides */
+.gm-style {
+  font-family: inherit !important;
+}
+
+.gm-style .gm-style-iw-c {
+  background-color: #141721 !important;
+  border: 1px solid #2e3547 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 12px 30px -5px rgba(0, 0, 0, 0.8) !important;
+  padding: 8px 10px !important;
+}
+
+.gm-style .gm-style-iw-tc::after {
+  background-color: #141721 !important;
+}
+
+.gm-style .gm-style-iw-d {
+  overflow: auto !important;
+  color: #f1f3f7 !important;
+  padding: 0 !important;
+}
+
+.gm-style button.gm-ui-hover-effect {
+  filter: invert(1) !important;
+  margin: 4px !important;
+}
+
+.gm-style-cc {
+  opacity: 0.65;
+}
+
+.gm-style-mtc button {
+  background-color: #141721 !important;
+  color: #94a3b8 !important;
+  border: 1px solid #242938 !important;
+}
+
+.gm-style-mtc ul {
+  background-color: #141721 !important;
+  border: 1px solid #242938 !important;
+}
+
+.gm-style-mtc ul li span {
+  color: #cbd5e1 !important;
+}
+
+/* Fallback / Legacy Leaflet Styles */
 .leaflet-container {
   height: 100%;
   width: 100%;
   background: #090a0f !important;
   font-family: inherit !important;
-}
-
-/* Dark mode invert filter for standard OSM tiles */
-.dark-map-tiles {
-  filter: brightness(0.62) invert(1) contrast(3.1) hue-rotate(200deg) saturate(0.28);
-}
-
-.leaflet-popup-content-wrapper {
-  background: #141721 !important;
-  color: #f1f3f7 !important;
-  border: 1px solid #2e3547 !important;
-  border-radius: 6px !important;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7) !important;
-  padding: 0 !important;
-}
-
-.leaflet-popup-content {
-  margin: 12px 14px !important;
-  line-height: 1.4 !important;
-  font-size: 13px !important;
-}
-
-.leaflet-popup-tip {
-  background: #141721 !important;
-  border: 1px solid #2e3547 !important;
-}
-
-.leaflet-container a.leaflet-popup-close-button {
-  color: #9da5b7 !important;
-  padding: 6px 8px !important;
-}
-
-.leaflet-container a.leaflet-popup-close-button:hover {
-  color: #fff !important;
 }
 
 /* Instrument panel utility classes */

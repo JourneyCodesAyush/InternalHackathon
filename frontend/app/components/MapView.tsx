@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle } from 'lucide-react';
 
 interface MapViewProps {
   center: [number, number];
@@ -31,9 +31,9 @@ export default function MapView(props: MapViewProps) {
         }
       })
       .catch((err) => {
-        console.error('Failed to load MapInner component:', err);
+        console.error('Failed to load Google Maps component:', err);
         if (isMounted) {
-          setLoadError(err?.message || 'Failed to initialize geospatial map engine');
+          setLoadError(err?.message || 'Failed to initialize Google Maps engine');
         }
       });
 
@@ -45,8 +45,9 @@ export default function MapView(props: MapViewProps) {
   if (loadError) {
     return (
       <div className="w-full h-full bg-[#0d0f15] flex flex-col items-center justify-center text-rose-400 gap-3 p-6 text-center">
+        <AlertTriangle className="w-8 h-8 text-rose-500 mb-1" />
         <div className="text-xs font-mono tracking-wider uppercase text-rose-400 font-semibold">
-          Geospatial Map Engine Failed to Load
+          Google Maps Engine Failed to Load
         </div>
         <div className="text-[11px] font-mono text-zinc-500 max-w-md">
           {loadError}
@@ -60,14 +61,14 @@ export default function MapView(props: MapViewProps) {
       <div className="w-full h-full bg-[#0d0f15] flex flex-col items-center justify-center text-zinc-400 gap-3">
         <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
         <div className="text-xs font-mono tracking-wider uppercase text-zinc-400">
-          Initializing Geospatial Map Engine...
+          Initializing Google Maps Geospatial Engine...
         </div>
       </div>
     );
   }
 
   return (
-    <div className="w-full h-full relative overflow-hidden">
+    <div className="w-full h-full relative overflow-hidden bg-[#0d0f15]">
       <MapInnerComponent {...props} />
     </div>
   );

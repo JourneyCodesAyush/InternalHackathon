@@ -94,26 +94,58 @@ export default function LocationSearch({
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-            query
-          )}&limit=4`,
-          {
-            headers: {
-              'Accept-Language': 'en',
-            },
+        const google = (window as any).google;
+        let foundGoogleResults = false;
+
+        if (google?.maps?.Geocoder) {
+          try {
+            const geocoder = new google.maps.Geocoder();
+            const response = await new Promise<any[]>((resolve) => {
+              geocoder.geocode({ address: query }, (results: any[], status: string) => {
+                if (status === 'OK' && results) {
+                  resolve(results);
+                } else {
+                  resolve([]);
+                }
+              });
+            });
+
+            if (response && response.length > 0 && isSubscribed) {
+              foundGoogleResults = true;
+              const suggestions: SearchSuggestion[] = response.slice(0, 5).map((r) => ({
+                displayName: r.formatted_address.split(',').slice(0, 3).join(','),
+                coords: [r.geometry.location.lat(), r.geometry.location.lng()],
+                subtext: r.formatted_address,
+              }));
+              setApiSuggestions(suggestions);
+            }
+          } catch {
+            // Fall through to fallback
           }
-        );
-        if (res.ok && isSubscribed) {
-          const data = await res.json();
-          const externalSuggestions: SearchSuggestion[] = data.map(
-            (item: { display_name: string; lat: string; lon: string }) => ({
-              displayName: item.display_name.split(',').slice(0, 3).join(','),
-              coords: [parseFloat(item.lat), parseFloat(item.lon)],
-              subtext: item.display_name,
-            })
+        }
+
+        if (!foundGoogleResults) {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+              query
+            )}&limit=4`,
+            {
+              headers: {
+                'Accept-Language': 'en',
+              },
+            }
           );
-          setApiSuggestions(externalSuggestions);
+          if (res.ok && isSubscribed) {
+            const data = await res.json();
+            const externalSuggestions: SearchSuggestion[] = data.map(
+              (item: { display_name: string; lat: string; lon: string }) => ({
+                displayName: item.display_name.split(',').slice(0, 3).join(','),
+                coords: [parseFloat(item.lat), parseFloat(item.lon)],
+                subtext: item.display_name,
+              })
+            );
+            setApiSuggestions(externalSuggestions);
+          }
         }
       } catch {
         // Fallback silently if offline or throttled
