@@ -1,6 +1,6 @@
 'use client';
 
-import { Activity, Wind, Layers } from 'lucide-react';
+import { Activity, Wind, Layers, Navigation } from 'lucide-react';
 
 interface LayerToggleProps {
   showNo2: boolean;
@@ -93,6 +93,16 @@ export default function LayerToggle({ showNo2, showWind, onChange }: LayerToggle
           </button>
         );
       })}
+      
+      <div className="mt-2 pt-2 border-t border-white/6">
+        <button
+          onClick={() => window.open('/drone', '_blank')}
+          className="flex items-center justify-center gap-2 px-2.5 py-2 rounded-lg text-xs font-medium w-full bg-blue-600/80 hover:bg-blue-500 text-white transition-colors cursor-pointer shadow-lg"
+        >
+          <Navigation className="w-3.5 h-3.5" />
+          <span>Pi Drone Portal</span>
+        </button>
+      </div>
     </div>
   );
 }

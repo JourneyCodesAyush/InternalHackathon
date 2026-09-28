@@ -23,7 +23,7 @@ export default function RootLayout({
         <AuthProvider>
           <UploadProvider>
             <div className="flex flex-col h-full w-full overflow-hidden">
-              <div className="flex-1 min-h-0 w-full overflow-hidden relative">
+              <div className="flex-1 min-h-0 w-full overflow-y-auto relative">
                 {children}
               </div>
             </div>

@@ -80,6 +80,10 @@ interface Analysis {
     notice: string | null;
     /** Unusual activity: places breaking the limit or rising far above their usual level, with likely causes. */
     anomalies?: string[];
+    /** Drone camera haze (DCP) combined with the NO₂ model. */
+    haze?: string;
+    /** One line per pre-inspection drone flight plan (full plans are in the PDF). */
+    flight_plans?: string[];
   };
 }
 
@@ -209,6 +213,25 @@ function AnalysisPanel({ a }: { a: Analysis }) {
           </p>
         )}
       </div>
+
+      {a.texts.haze && (
+        <div className="space-y-1">
+          <div className="text-[13px] uppercase tracking-wide text-zinc-500">Haze (drone camera) + NO₂</div>
+          <p className="text-[13px] text-zinc-300 leading-relaxed">{a.texts.haze}</p>
+        </div>
+      )}
+
+      {a.texts.flight_plans && a.texts.flight_plans.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-[13px] uppercase tracking-wide text-zinc-500">Pre-inspection drone flights</div>
+          {a.texts.flight_plans.map((line) => (
+            <div key={line} className="p-2 rounded border border-sky-500/40 bg-sky-500/10 text-[13px] text-sky-100">
+              {line}
+            </div>
+          ))}
+          <p className="text-[12px] text-zinc-500">Full flight plans (map, wind, elevation, battery, waypoints) are in the PDF report.</p>
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <div className="text-[13px] uppercase tracking-wide text-zinc-500">Comparison with standards</div>
