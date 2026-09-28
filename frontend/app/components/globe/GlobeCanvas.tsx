@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { drawBaseMap } from './globeData';
 import type { FluxVector, GatewayItem } from './transboundaryData';
+import { FLUX_CASING, fluxArrows, fluxColour, hexToRgb } from './fluxStyle';
 
 // Colour scale (log) in µmol/m²: clean background (~3-8) stays transparent, large polluted cities saturate.
 // 1 µmol/m² = 6.02e13 molecules/cm², so 8 ≈ 5e14 and 160 ≈ 1e16 molecules/cm².
@@ -65,8 +66,13 @@ export interface GlobeApi {
   setActive: (active: boolean) => void;
   /** Globe distance limits expressed as MapLibre zooms at ``lat`` (for easing the 2-D map before rolling up). */
   zoomRange: (lat: number) => [number, number];
-  /** Smoothly focus camera on specific coordinates */
-  focus?: (lat: number, lon: number, distance?: number) => void;
+  /**
+   * Fly the camera to a point: along the surface (great circle), easing out to give context mid-flight on
+   * long hops, ending at ``distance`` (globe radii from the centre). Resolves when the flight ends.
+   */
+  focus: (lat: number, lon: number, distance?: number) => Promise<void>;
+  /** Shift the rendered globe left by ``px`` (to keep it centred beside a side panel), animated. */
+  setViewShift: (px: number, durationMs?: number) => Promise<void>;
 }
 
 const FOV = 40;
@@ -196,6 +202,44 @@ const ATMOSPHERE_FRAGMENT = /* glsl */ `
   }
 `;
 
+// Cross-border flux "wind swoosh": a ribbon mesh with per-vertex position along it (0 tail .. 1 tip) and
+// across it (-1 .. 1). The tail fades in, edges are soft, and bands of light sweep towards the tip.
+const SWOOSH_VERTEX = /* glsl */ `
+  attribute float along;
+  attribute float across;
+  attribute vec3 tint;
+  varying float vAlong;
+  varying float vAcross;
+  varying vec3 vTint;
+  void main() {
+    vAlong = along;
+    vAcross = across;
+    vTint = tint;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+const SWOOSH_FRAGMENT = /* glsl */ `
+  uniform float uTime;
+  uniform float uCasing;
+  uniform vec3 uCasingColour;
+  varying float vAlong;
+  varying float vAcross;
+  varying vec3 vTint;
+  void main() {
+    float tail = mix(0.25, 1.0, smoothstep(0.0, 0.3, vAlong));
+    float edge = 1.0 - smoothstep(0.55, 1.0, abs(vAcross));
+    if (uCasing > 0.5) {
+      gl_FragColor = vec4(uCasingColour, 0.55 * tail);
+      return;
+    }
+    // two soft light bands travelling tail -> tip along the shaft
+    float band = fract(vAlong * 1.6 - uTime * 0.55);
+    float gust = smoothstep(0.0, 0.18, band) * (1.0 - smoothstep(0.18, 0.55, band)) * (1.0 - step(0.8, vAlong));
+    vec3 col = mix(vTint, vec3(1.0), gust * 0.6 * edge);
+    gl_FragColor = vec4(col, tail * mix(0.55, 1.0, edge));
+  }
+`;
+
 const WIND_PARTICLES = 5000;
 const WIND_SPEED_FACTOR = 0.012; // degrees of drift per frame per m/s (visual only)
 const WIND_TAIL_FRAMES = 22; // segment length, in frames of motion
@@ -240,7 +284,8 @@ export default function GlobeCanvas({
     ageTexture: THREE.DataTexture | null;
     wind: THREE.LineSegments;
     highlight: THREE.LineSegments;
-    fluxLines: THREE.LineSegments;
+    fluxLines: THREE.Group;
+    fluxLayers: THREE.Mesh[];
     windState: { lat: Float32Array; lon: Float32Array; life: Float32Array } | null;
     field: GlobeFrames | null;
   } | null>(null);
@@ -331,12 +376,26 @@ export default function GlobeCanvas({
     highlight.frustumCulled = false;
     scene.add(highlight);
 
-    // Transboundary atmospheric NO2 flux vectors
-    const fluxLines = new THREE.LineSegments(
-      new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false }),
-    );
-    fluxLines.frustumCulled = false;
+    // Cross-border flux arrows: tapered "wind swoosh" ribbons (dark casing under a lit core) over the surface
+    const swooshTime = { value: 0 };
+    const swooshMaterial = (casing: boolean) =>
+      new THREE.ShaderMaterial({
+        vertexShader: SWOOSH_VERTEX,
+        fragmentShader: SWOOSH_FRAGMENT,
+        uniforms: { uTime: swooshTime, uCasing: { value: casing ? 1 : 0 }, uCasingColour: { value: new THREE.Color(FLUX_CASING) } },
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+    const fluxLayers = [true, false].map((casing, i) => {
+      const mesh = new THREE.Mesh(new THREE.BufferGeometry(), swooshMaterial(casing));
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 10 + i;
+      return mesh;
+    });
+    const fluxLines = new THREE.Group();
+    fluxLayers.forEach((m) => fluxLines.add(m));
+    fluxLines.visible = false;
     scene.add(fluxLines);
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -352,7 +411,7 @@ export default function GlobeCanvas({
     controls.addEventListener('start', () => (lastInteraction = performance.now()));
     controls.addEventListener('end', () => (lastInteraction = performance.now()));
 
-    sceneRef.current = { material, controls, textures: [], ageTexture: null, wind, highlight, fluxLines, windState: null, field: null };
+    sceneRef.current = { material, controls, textures: [], ageTexture: null, wind, highlight, fluxLines, fluxLayers, windState: null, field: null };
 
     // Hover picking: ray -> sphere UV -> lat/lon
     const raycaster = new THREE.Raycaster();
@@ -402,7 +461,7 @@ export default function GlobeCanvas({
       if (!w || !h) return;
       renderer.setSize(w, h);
       camera.aspect = w / h;
-      camera.updateProjectionMatrix();
+      applyViewShift(); // also updates the projection matrix
     });
     resize.observe(mount);
 
@@ -452,6 +511,15 @@ export default function GlobeCanvas({
 
     // ---- 2-D <-> 3-D: unroll the sphere into a Web-Mercator sheet and back ----
     const uniforms = material.uniforms;
+    // horizontal screen shift of the whole view (px): the globe sits centred in the space left of a side panel
+    let viewShift = 0;
+    const applyViewShift = () => {
+      const w = mount.clientWidth;
+      const h = mount.clientHeight;
+      if (Math.abs(viewShift) < 0.5) camera.clearViewOffset();
+      else camera.setViewOffset(w, h, viewShift, 0, w, h);
+      camera.updateProjectionMatrix();
+    };
     const atmosphereUniforms = (atmosphere.material as THREE.ShaderMaterial).uniforms;
     let active = true;
     let morphing = false;
@@ -542,19 +610,40 @@ export default function GlobeCanvas({
           active = on;
         },
         zoomRange: (lat) => [zoomFor(MAX_DISTANCE, lat), zoomFor(MIN_DISTANCE + 0.25, lat)],
-        focus: async (lat, lon, distance = 1.6) => {
-          const target = toXYZ(lat, lon, distance, new THREE.Vector3());
-          const from = camera.position.clone();
+        focus: async (lat, lon, distance = 2.2) => {
+          if (morphing || uniforms.uMorph.value > 0) return;
+          const d1 = Math.min(MAX_DISTANCE, Math.max(MIN_DISTANCE + 0.15, distance));
+          const d0 = camera.position.length();
+          const fromDir = camera.position.clone().normalize();
+          const toDir = toXYZ(lat, lon, 1, new THREE.Vector3());
+          const angle = fromDir.angleTo(toDir);
+          // rotate along the great circle (never through the Earth) and pull back mid-flight on long hops
+          const spin = new THREE.Quaternion().setFromUnitVectors(fromDir, toDir);
+          const still = new THREE.Quaternion();
+          const q = new THREE.Quaternion();
+          const lift = Math.min(1.6, angle * 0.9);
+          const ms = 900 + Math.min(900, angle * 700);
           controls.enabled = false;
-          await animate(650, (t) => {
-            camera.position.lerpVectors(from, target, t);
+          morphing = true; // pauses auto-rotate and control damping during the flight
+          await animate(ms, (t) => {
+            q.slerpQuaternions(still, spin, t);
+            const dist = d0 + (d1 - d0) * t + lift * Math.sin(Math.PI * t);
+            camera.position.copy(fromDir).applyQuaternion(q).multiplyScalar(dist);
             camera.lookAt(0, 0, 0);
           });
-          camera.position.copy(target);
+          morphing = false;
           controls.target.set(0, 0, 0);
           controls.update();
           controls.enabled = true;
           lastInteraction = performance.now();
+        },
+        setViewShift: async (px, ms = 450) => {
+          const from = viewShift;
+          if (Math.abs(px - from) < 0.5) return;
+          await animate(ms, (t) => {
+            viewShift = from + (px - from) * t;
+            applyViewShift();
+          });
         },
       };
     }
@@ -567,6 +656,8 @@ export default function GlobeCanvas({
       controls.autoRotate = !morphing && uniforms.uMorph.value === 0 && rotate && performance.now() - lastInteraction > 4000;
       if (!morphing && uniforms.uMorph.value === 0) controls.update();
       wind.visible = windOn && uniforms.uMorph.value < 0.25;
+      fluxLines.visible = Boolean(propsRef.current.showFlux) && uniforms.uMorph.value === 0;
+      swooshTime.value = performance.now() / 1000;
       if (wind.visible) stepWind();
       renderer.render(scene, camera);
     };
@@ -643,103 +734,75 @@ export default function GlobeCanvas({
     s.highlight.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   }, [outline]);
 
-  // Transboundary atmospheric NO2 flux vectors: 3D lines with directional arrowheads
+  // Cross-border flux arrows: each a tapered ribbon along a great-circle arc lifted over the surface, thin and
+  // faded at the upwind tail, widening towards a broad arrowhead (one mesh for the dark casing, one for the colour)
   useEffect(() => {
     const s = sceneRef.current;
     if (!s) return;
-    if (!showFlux || ((!fluxVectors || fluxVectors.length === 0) && (!gateways || gateways.length === 0))) {
-      s.fluxLines.visible = false;
-      return;
-    }
-    s.fluxLines.visible = true;
-    const positions: number[] = [];
-    const colors: number[] = [];
-    const a = new THREE.Vector3();
-    const b = new THREE.Vector3();
-    const wing1 = new THREE.Vector3();
-    const wing2 = new THREE.Vector3();
-
-    if (fluxVectors) {
-      for (const vec of fluxVectors) {
-        const [lon0, lat0] = vec.start;
-        const [lon1, lat1] = vec.end;
-        toXYZ(lat0, lon0, 1.008, a);
-        toXYZ(lat1, lon1, 1.008, b);
-
-        // Main shaft line
-        positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
-
-        // Arrowhead wings
-        const dir = new THREE.Vector3().subVectors(b, a).normalize();
-        const norm = new THREE.Vector3().crossVectors(dir, b).normalize();
-        const wingLen = 0.022;
-        wing1.copy(b).sub(dir.clone().multiplyScalar(wingLen)).add(norm.clone().multiplyScalar(wingLen * 0.5));
-        wing2.copy(b).sub(dir.clone().multiplyScalar(wingLen)).sub(norm.clone().multiplyScalar(wingLen * 0.5));
-
-        positions.push(b.x, b.y, b.z, wing1.x, wing1.y, wing1.z);
-        positions.push(b.x, b.y, b.z, wing2.x, wing2.y, wing2.z);
-
-        // Perpendicular border marker line across midpoint
-        const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
-        const perp = new THREE.Vector3().crossVectors(dir, mid).normalize();
-        const bSpan = 0.014;
-        const bp1 = mid.clone().add(perp.clone().multiplyScalar(bSpan));
-        const bp2 = mid.clone().sub(perp.clone().multiplyScalar(bSpan));
-        positions.push(bp1.x, bp1.y, bp1.z, bp2.x, bp2.y, bp2.z);
-
-        let r = 0.22, g = 0.74, bl = 0.97; // sky
-        if (vec.intensity === 'severe') {
-          r = 0.96; g = 0.25; bl = 0.37; // rose
-        } else if (vec.intensity === 'high') {
-          r = 0.98; g = 0.57; bl = 0.24; // amber
-        } else if (vec.intensity === 'low') {
-          r = 0.2; g = 0.83; bl = 0.6; // emerald
+    const build = (grow: number) => {
+      const pos: number[] = [];
+      const along: number[] = [];
+      const across: number[] = [];
+      const tint: number[] = [];
+      const index: number[] = [];
+      if (showFlux) {
+        const P = new THREE.Vector3();
+        const Q = new THREE.Vector3();
+        const T = new THREE.Vector3();
+        const S = new THREE.Vector3();
+        for (const { vec, start, end, weight } of fluxArrows(fluxVectors)) {
+          const rgb = hexToRgb(fluxColour(vec.intensity));
+          const from = toXYZ(start[1], start[0], 1, new THREE.Vector3());
+          const to = toXYZ(end[1], end[0], 1, new THREE.Vector3());
+          const angle = from.angleTo(to);
+          const at = (t: number, out: THREE.Vector3) =>
+            out.copy(from).lerp(to, t).normalize().multiplyScalar(1.003 + angle * 0.12 * Math.sin(Math.PI * t));
+          const w0 = (0.0016 + 0.0006 * weight) * grow; // shaft half-width near the head (globe radii)
+          const HEAD = 0.78;
+          // width profile: tapered shaft, then a broad head closing to the tip (HEAD sampled twice = barbs)
+          const stations: [number, number][] = [];
+          for (let i = 0; i <= 26; i++) {
+            const t = (i / 26) * HEAD;
+            stations.push([t, w0 * (0.45 + 0.55 * Math.pow(t / HEAD, 0.8))]);
+          }
+          for (let i = 0; i <= 8; i++) {
+            const t = HEAD + (i / 8) * (1 - HEAD);
+            stations.push([t, w0 * 2.5 * (1 - (t - HEAD) / (1 - HEAD)) + (grow > 1 ? w0 * 0.25 : 0)]);
+          }
+          const first = pos.length / 3;
+          for (const [t, w] of stations) {
+            at(t, P);
+            at(Math.min(1, t + 0.01), Q);
+            T.subVectors(Q, P);
+            if (T.lengthSq() < 1e-12) at(Math.max(0, t - 0.01), T).sub(P).negate();
+            S.crossVectors(T, P).normalize().multiplyScalar(w);
+            for (const side of [1, -1]) {
+              pos.push(P.x + S.x * side, P.y + S.y * side, P.z + S.z * side);
+              along.push(t);
+              across.push(side);
+              tint.push(...rgb);
+            }
+          }
+          for (let k = 0; k < stations.length - 1; k++) {
+            const i0 = first + 2 * k;
+            index.push(i0, i0 + 1, i0 + 2, i0 + 1, i0 + 3, i0 + 2);
+          }
         }
-
-        // 3 segments for arrow = 6 vertices
-        for (let k = 0; k < 6; k++) {
-          colors.push(r, g, bl);
-        }
-        // 1 segment for border marker = 2 vertices
-        colors.push(0.9, 0.9, 0.95);
-        colors.push(0.9, 0.9, 0.95);
       }
-    }
-
-    // Gateway checkpoint diamond markers
-    if (gateways && gateways.length > 0) {
-      for (const gw of gateways) {
-        const [gwLon, gwLat] = gw.coordinates;
-        const centerGw = toXYZ(gwLat, gwLon, 1.012, new THREE.Vector3());
-        const dSize = 0.007;
-        const phi = ((gwLon + 180) / 360) * Math.PI * 2;
-        const eGw = new THREE.Vector3(Math.sin(phi), 0, Math.cos(phi)).normalize().multiplyScalar(dSize);
-        const nGw = new THREE.Vector3().crossVectors(centerGw, eGw).normalize().multiplyScalar(dSize);
-
-        const pTop = centerGw.clone().add(nGw);
-        const pBot = centerGw.clone().sub(nGw);
-        const pRight = centerGw.clone().add(eGw);
-        const pLeft = centerGw.clone().sub(eGw);
-
-        positions.push(pTop.x, pTop.y, pTop.z, pRight.x, pRight.y, pRight.z);
-        positions.push(pRight.x, pRight.y, pRight.z, pBot.x, pBot.y, pBot.z);
-        positions.push(pBot.x, pBot.y, pBot.z, pLeft.x, pLeft.y, pLeft.z);
-        positions.push(pLeft.x, pLeft.y, pLeft.z, pTop.x, pTop.y, pTop.z);
-
-        let gr = 0.22, gg = 0.74, gbl = 0.97;
-        if (gw.intensity === 'severe') { gr = 0.96; gg = 0.25; gbl = 0.37; }
-        else if (gw.intensity === 'high') { gr = 0.98; gg = 0.57; gbl = 0.24; }
-        else if (gw.intensity === 'low') { gr = 0.2; gg = 0.83; gbl = 0.6; }
-
-        for (let k = 0; k < 8; k++) colors.push(gr, gg, gbl);
-      }
-    }
-
-    s.fluxLines.geometry.dispose();
-    s.fluxLines.geometry = new THREE.BufferGeometry();
-    s.fluxLines.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    s.fluxLines.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  }, [fluxVectors, gateways, showFlux]);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('along', new THREE.Float32BufferAttribute(along, 1));
+      g.setAttribute('across', new THREE.Float32BufferAttribute(across, 1));
+      g.setAttribute('tint', new THREE.Float32BufferAttribute(tint, 3));
+      g.setIndex(index);
+      return g;
+    };
+    const [casing, core] = s.fluxLayers;
+    casing.geometry.dispose();
+    core.geometry.dispose();
+    casing.geometry = build(1.6);
+    core.geometry = build(1);
+  }, [fluxVectors, showFlux]);
 
   // Animation state -> uniforms
   useEffect(() => {

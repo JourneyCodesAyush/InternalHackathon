@@ -69,7 +69,8 @@ export default function TransboundaryPanel({
 
   return (
     <div
-      className="absolute top-16 sm:top-20 right-2 sm:right-4 z-30 w-[95vw] sm:w-[35rem] md:w-[38rem] max-h-[82vh] flex flex-col rounded-2xl bg-[#0c101a]/95 border border-[#2b354f] backdrop-blur-2xl shadow-2xl text-xs text-zinc-200 overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+      // side sheet: full height on the right, 440 px wide (the page keeps the globe and controls beside it)
+      className="absolute inset-x-2 top-2 bottom-2 sm:inset-x-auto sm:right-4 sm:top-4 sm:bottom-4 sm:w-[440px] z-40 flex flex-col rounded-2xl bg-[#0c101a]/95 border border-[#2b354f] backdrop-blur-2xl shadow-2xl text-xs text-zinc-200 overflow-hidden animate-in fade-in slide-in-from-right-4 duration-300"
       role="region"
       aria-label="CAQM Transboundary Atmospheric NO2 Flux Analysis"
     >

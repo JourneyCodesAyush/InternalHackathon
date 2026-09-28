@@ -6,6 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Position } from 'geojson';
 import { MAX_COLUMN, MIN_COLUMN, type GlobeFrames, type HoverInfo, type MapView } from './GlobeCanvas';
 import { worldCountries } from './countries';
+import { FLUX_CASING, fluxArrows, fluxColour, fluxLabel, gatewayColour } from './fluxStyle';
 import type { FluxVector, GatewayItem } from './transboundaryData';
 
 setWorkerUrl('/maplibre/maplibre-gl-worker.mjs');
@@ -21,6 +22,10 @@ export interface FlatMapApi {
   easeTo: (view: Partial<MapView>, durationMs?: number) => Promise<void>;
   /** Resolves once the style and the NO₂ layer are drawn. */
   ready: () => Promise<void>;
+  /** Fly (zoom out, pan, zoom in) to a view; resolves when it lands. */
+  flyTo: (view: MapView, rightPadding?: number) => Promise<void>;
+  /** Reserve ``px`` on the right (a side panel): the view centre moves into the remaining space. */
+  setRightPadding: (px: number, durationMs?: number) => Promise<void>;
 }
 
 interface FlatMapProps {
@@ -146,6 +151,7 @@ export default function FlatMap({
 }: FlatMapProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const windRef = useRef<HTMLCanvasElement>(null);
+  const fluxRef = useRef<HTMLCanvasElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const loadedRef = useRef<Promise<void> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -234,6 +240,23 @@ export default function FlatMap({
         await loadedRef.current;
         if (!map.loaded()) await new Promise<void>((r) => map.once('idle', () => r()));
       },
+      flyTo: ({ lat, lon, zoom }, rightPadding) =>
+        new Promise((resolve) => {
+          map.once('moveend', () => resolve());
+          // zoom-out-and-in arc; duration scales with the distance, capped so it never drags
+          map.flyTo({
+            center: [lon, lat], zoom, curve: 1.5, speed: 1.1, maxDuration: 2200, essential: true,
+            ...(rightPadding !== undefined ? { padding: { top: 0, bottom: 0, left: 0, right: rightPadding } } : {}),
+          });
+        }),
+      setRightPadding: (px, ms = 450) =>
+        new Promise((resolve) => {
+          const current = map.getPadding().right ?? 0;
+          if (Math.abs(current - px) < 0.5) return resolve();
+          map.once('moveend', () => resolve());
+          // keeps the same geographic centre, now centred in the space left of the panel
+          map.easeTo({ padding: { top: 0, bottom: 0, left: 0, right: px }, duration: ms });
+        }),
     };
 
     // ---- wind particles on a canvas above the map (lon/lat advected on the GFS field, fading trails) ----
@@ -264,9 +287,152 @@ export default function FlatMap({
     });
     for (let p = 0; p < WIND_PARTICLES; p++) seed(p);
 
+    // ---- cross-border flux arrows and gateways: own canvas, redrawn every frame (animated flow dashes) ----
+    const fluxCanvas = fluxRef.current!;
+    const fctx = fluxCanvas.getContext('2d')!;
+    const sizeFlux = () => {
+      const dpr = Math.min(window.devicePixelRatio, 2);
+      fluxCanvas.width = mount.clientWidth * dpr;
+      fluxCanvas.height = mount.clientHeight * dpr;
+      fctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    sizeFlux();
+    const fluxObserver = new ResizeObserver(sizeFlux);
+    fluxObserver.observe(mount);
+    const drawFlux = (now: number) => {
+      fctx.clearRect(0, 0, mount.clientWidth, mount.clientHeight);
+      const { fluxVectors, gateways, showFlux } = propsRef.current;
+      if (!showFlux) return;
+      const zoom = map.getZoom();
+      const placed: [number, number, number, number][] = []; // label boxes, to avoid overlaps
+      const free = (x: number, y: number, w: number, h: number) =>
+        !placed.some(([px, py, pw, ph]) => x < px + pw && x + w > px && y < py + ph && y + h > py);
+      const pill = (text: string, x: number, y: number, colour: string) => {
+        fctx.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+        const w = fctx.measureText(text).width + 16;
+        const h = 20;
+        const bx = x - w / 2;
+        const by = y - h / 2;
+        if (!free(bx - 3, by - 3, w + 6, h + 6)) return;
+        placed.push([bx - 3, by - 3, w + 6, h + 6]);
+        fctx.fillStyle = 'rgba(6, 9, 16, 0.92)';
+        fctx.strokeStyle = colour;
+        fctx.lineWidth = 1.5;
+        fctx.beginPath();
+        fctx.roundRect(bx, by, w, h, 10);
+        fctx.fill();
+        fctx.stroke();
+        fctx.fillStyle = '#f8fafc';
+        fctx.textBaseline = 'middle';
+        fctx.fillText(text, bx + 8, y + 0.5);
+      };
+
+      for (const { vec, start, end, weight } of fluxArrows(fluxVectors)) {
+        const a = map.project(start);
+        const b = map.project(end);
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (!Number.isFinite(len) || len < 4) continue;
+        const colour = fluxColour(vec.intensity);
+        // gentle curve: control point pushed sideways by 12% of the length
+        const nx = -(b.y - a.y) / len;
+        const ny = (b.x - a.x) / len;
+        const cx = (a.x + b.x) / 2 + nx * len * 0.12;
+        const cy = (a.y + b.y) / 2 + ny * len * 0.12;
+        const pointAt = (t: number) => {
+          const u = 1 - t;
+          return [u * u * a.x + 2 * u * t * cx + t * t * b.x, u * u * a.y + 2 * u * t * cy + t * t * b.y];
+        };
+        // "wind swoosh": thin, faded tail widening towards a broad arrowhead (HEAD sampled twice = barbs)
+        const w0 = 3 + 2 * weight; // shaft half-width near the head (px)
+        const HEAD = 0.78;
+        const stations: [number, number][] = [];
+        for (let i = 0; i <= 24; i++) {
+          const t = (i / 24) * HEAD;
+          stations.push([t, w0 * (0.45 + 0.55 * Math.pow(t / HEAD, 0.8))]);
+        }
+        for (let i = 0; i <= 6; i++) {
+          const t = HEAD + (i / 6) * (1 - HEAD);
+          stations.push([t, w0 * 2.5 * (1 - (t - HEAD) / (1 - HEAD))]);
+        }
+        const left: number[][] = [];
+        const right: number[][] = [];
+        for (const [t, w] of stations) {
+          const [px, py] = pointAt(t);
+          const [qx, qy] = pointAt(Math.min(1, t + 0.01));
+          let tx = qx - px;
+          let ty = qy - py;
+          if (t >= 0.99) {
+            const [rx, ry] = pointAt(t - 0.01);
+            tx = px - rx;
+            ty = py - ry;
+          }
+          const tl = Math.hypot(tx, ty) || 1;
+          left.push([px - (ty / tl) * w, py + (tx / tl) * w]);
+          right.push([px + (ty / tl) * w, py - (tx / tl) * w]);
+        }
+        const outline = () => {
+          fctx.beginPath();
+          left.forEach(([x, y], i) => (i ? fctx.lineTo(x, y) : fctx.moveTo(x, y)));
+          for (let i = right.length - 1; i >= 0; i--) fctx.lineTo(right[i][0], right[i][1]);
+          fctx.closePath();
+        };
+        // soft dark casing, then the colour fading in from the tail, then a gust of light sweeping forward
+        outline();
+        fctx.lineJoin = 'round';
+        fctx.lineWidth = 3;
+        fctx.strokeStyle = 'rgba(4, 6, 12, 0.6)';
+        fctx.stroke();
+        const fill = fctx.createLinearGradient(a.x, a.y, b.x, b.y);
+        fill.addColorStop(0, `${colour}40`);
+        fill.addColorStop(0.3, `${colour}dd`);
+        fill.addColorStop(1, colour);
+        fctx.fillStyle = fill;
+        fctx.fill();
+        const g = (now / 1800) % 1;
+        const gust = fctx.createLinearGradient(a.x, a.y, b.x, b.y);
+        const stop = (t: number, alpha: number) => gust.addColorStop(Math.min(1, Math.max(0, t)), `rgba(255,255,255,${alpha})`);
+        stop(0, 0);
+        stop(g * HEAD - 0.12, 0);
+        stop(g * HEAD, 0.55);
+        stop(g * HEAD + 0.05, 0);
+        stop(1, 0);
+        fctx.fillStyle = gust;
+        fctx.fill();
+        if (zoom >= 5) pill(fluxLabel(vec), cx + nx * 16, cy + ny * 16, colour);
+      }
+
+      for (const gw of gateways ?? []) {
+        const pt = map.project(gw.coordinates);
+        if (!Number.isFinite(pt.x)) continue;
+        const colour = gatewayColour(gw);
+        const pulse = (now / 1600) % 1;
+        fctx.strokeStyle = colour;
+        fctx.globalAlpha = 0.6 * (1 - pulse);
+        fctx.lineWidth = 2;
+        fctx.beginPath();
+        fctx.arc(pt.x, pt.y, 6 + pulse * 12, 0, Math.PI * 2);
+        fctx.stroke();
+        fctx.globalAlpha = 1;
+        fctx.beginPath();
+        fctx.arc(pt.x, pt.y, 5.5, 0, Math.PI * 2);
+        fctx.fillStyle = colour;
+        fctx.fill();
+        fctx.lineWidth = 2.5;
+        fctx.strokeStyle = FLUX_CASING;
+        fctx.stroke();
+        if (zoom >= 6.6) {
+          const t = gw.flux_tonnes_day ? `${gw.name} · ${gw.flux_tonnes_day} t/d` : gw.name;
+          fctx.font = '600 11px ui-sans-serif, system-ui, sans-serif';
+          const w = fctx.measureText(t).width + 16;
+          pill(t, pt.x + 12 + w / 2, pt.y, colour);
+        }
+      }
+    };
+
     let raf = 0;
     const step = () => {
       raf = requestAnimationFrame(step);
+      drawFlux(performance.now());
       const field = propsRef.current.data;
       if (!propsRef.current.showWind || !field || map.isMoving()) {
         clear();
@@ -309,175 +475,13 @@ export default function FlatMap({
       wctx.strokeStyle = 'rgba(205,225,255,0.55)';
       wctx.stroke();
 
-      // Render transboundary atmospheric flux vectors, border transects, and gateway checkpoints
-      const { fluxVectors, gateways, showFlux } = propsRef.current;
-      if (showFlux) {
-        const nowTime = performance.now();
-        const currentZoom = map.getZoom();
-        wctx.save();
-
-        // 1. Draw Transboundary Corridor Flow Vectors & Border Demarcation
-        if (fluxVectors && fluxVectors.length > 0) {
-          for (const vec of fluxVectors) {
-            const a = map.project(vec.start);
-            const b = map.project(vec.end);
-            if (!Number.isFinite(a.x) || !Number.isFinite(b.x)) continue;
-
-            let stroke = '#38bdf8';
-            if (vec.intensity === 'severe') stroke = '#f43f5e';
-            else if (vec.intensity === 'high') stroke = '#fb923c';
-            else if (vec.intensity === 'low') stroke = '#34d399';
-
-            const midX = (a.x + b.x) / 2;
-            const midY = (a.y + b.y) / 2;
-            const angle = Math.atan2(b.y - a.y, b.x - a.x);
-
-            // A. Draw Border Transect Demarcation (perpendicular dashed line at midpoint)
-            const perpAngle = angle + Math.PI / 2;
-            const vecLen = Math.hypot(b.x - a.x, b.y - a.y);
-            const borderSpan = Math.min(90, Math.max(30, vecLen * 0.75));
-
-            wctx.save();
-            wctx.setLineDash([5, 4]);
-            wctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-            wctx.lineWidth = 1.5;
-            wctx.beginPath();
-            wctx.moveTo(midX - borderSpan * Math.cos(perpAngle), midY - borderSpan * Math.sin(perpAngle));
-            wctx.lineTo(midX + borderSpan * Math.cos(perpAngle), midY + borderSpan * Math.sin(perpAngle));
-            wctx.stroke();
-            wctx.restore();
-
-            // B. Draw Dynamic Advection Plume Pulses along the transport vector
-            const pulsePhase = (nowTime / 1000) % 1;
-            for (let p = 0; p < 3; p++) {
-              const frac = (pulsePhase + p * 0.33) % 1;
-              const px = a.x + (b.x - a.x) * frac;
-              const py = a.y + (b.y - a.y) * frac;
-              wctx.fillStyle = stroke;
-              wctx.shadowColor = stroke;
-              wctx.shadowBlur = 8;
-              wctx.beginPath();
-              wctx.arc(px, py, 2.5, 0, Math.PI * 2);
-              wctx.fill();
-            }
-
-            // C. Main Vector Shaft
-            wctx.shadowColor = stroke;
-            wctx.shadowBlur = 12;
-            wctx.strokeStyle = stroke;
-            wctx.lineWidth = 3.5;
-            wctx.beginPath();
-            wctx.moveTo(a.x, a.y);
-            wctx.lineTo(b.x, b.y);
-            wctx.stroke();
-
-            // D. Arrowhead
-            const headLen = 11;
-            wctx.fillStyle = stroke;
-            wctx.beginPath();
-            wctx.moveTo(b.x, b.y);
-            wctx.lineTo(b.x - headLen * Math.cos(angle - Math.PI / 6), b.y - headLen * Math.sin(angle - Math.PI / 6));
-            wctx.lineTo(b.x - headLen * Math.cos(angle + Math.PI / 6), b.y - headLen * Math.sin(angle + Math.PI / 6));
-            wctx.closePath();
-            wctx.fill();
-
-            // E. Badge Label with Inflow / Outflow & Flux Rate
-            const isInf = vec.is_inflow;
-            const labelType = isInf ? 'INFLOW' : 'OUTFLOW';
-            const text = `${labelType} ${vec.flux_tonnes_day > 0 ? '+' : ''}${vec.flux_tonnes_day} t/d`;
-            wctx.font = 'bold 10px monospace';
-            const tw = wctx.measureText(text).width;
-            const badgeW = tw + 12;
-            const badgeH = currentZoom >= 7.5 ? 24 : 16;
-            const badgeX = midX - badgeW / 2;
-            const badgeY = midY - badgeH / 2;
-
-            wctx.shadowBlur = 0;
-            wctx.fillStyle = 'rgba(10, 15, 26, 0.92)';
-            wctx.fillRect(badgeX, badgeY, badgeW, badgeH);
-            wctx.strokeStyle = stroke;
-            wctx.lineWidth = 1;
-            wctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
-
-            wctx.fillStyle = isInf ? '#38bdf8' : '#fb923c';
-            wctx.fillText(text, badgeX + 6, badgeY + 11);
-
-            if (currentZoom >= 7.5) {
-              wctx.font = '9px sans-serif';
-              wctx.fillStyle = 'rgba(212, 212, 216, 0.9)';
-              wctx.fillText(`${vec.from_jurisdiction} → ${vec.to_jurisdiction}`, badgeX + 6, badgeY + 21);
-            }
-          }
-        }
-
-        // 2. Draw Airshed Gateway / Border Checkpoint Pins
-        if (gateways && gateways.length > 0) {
-          for (const gw of gateways) {
-            const pt = map.project(gw.coordinates);
-            if (!Number.isFinite(pt.x) || !Number.isFinite(pt.y)) continue;
-
-            let pinColor = '#38bdf8';
-            if (gw.intensity === 'severe') pinColor = '#f43f5e';
-            else if (gw.intensity === 'high') pinColor = '#fb923c';
-            else if (gw.intensity === 'low') pinColor = '#34d399';
-
-            // Animated radar beacon ring
-            const radarPhase = (nowTime / 800) % 1;
-            const ringRadius = 5 + radarPhase * 14;
-            const ringAlpha = Math.max(0, 1 - radarPhase);
-            wctx.strokeStyle = `rgba(56, 189, 248, ${ringAlpha * 0.8})`;
-            wctx.lineWidth = 1.5;
-            wctx.beginPath();
-            wctx.arc(pt.x, pt.y, ringRadius, 0, Math.PI * 2);
-            wctx.stroke();
-
-            // Center Pin Dot
-            wctx.fillStyle = pinColor;
-            wctx.shadowColor = pinColor;
-            wctx.shadowBlur = 8;
-            wctx.beginPath();
-            wctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
-            wctx.fill();
-
-            // High zoom checkpoint callout card
-            if (currentZoom >= 6.8) {
-              const title = `📍 ${gw.name}`;
-              const sub = `${gw.corridor}${gw.flux_tonnes_day ? ` · ${gw.flux_tonnes_day} t/d` : ''}`;
-              wctx.font = 'bold 10px sans-serif';
-              const t1w = wctx.measureText(title).width;
-              wctx.font = '9px monospace';
-              const t2w = wctx.measureText(sub).width;
-              const cardW = Math.max(t1w, t2w) + 12;
-              const cardH = 26;
-              const cardX = pt.x + 8;
-              const cardY = pt.y - 13;
-
-              wctx.shadowBlur = 0;
-              wctx.fillStyle = 'rgba(8, 12, 22, 0.92)';
-              wctx.fillRect(cardX, cardY, cardW, cardH);
-              wctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
-              wctx.lineWidth = 1;
-              wctx.strokeRect(cardX, cardY, cardW, cardH);
-
-              wctx.font = 'bold 10px sans-serif';
-              wctx.fillStyle = '#f1f5f9';
-              wctx.fillText(title, cardX + 6, cardY + 11);
-
-              wctx.font = '9px monospace';
-              wctx.fillStyle = pinColor;
-              wctx.fillText(sub, cardX + 6, cardY + 22);
-            }
-          }
-        }
-
-        wctx.restore();
-      }
     };
     step();
 
     return () => {
       cancelAnimationFrame(raf);
       observer.disconnect();
+      fluxObserver.disconnect();
       apiRef.current = null;
       map.remove();
       mapRef.current = null;
@@ -520,6 +524,7 @@ export default function FlatMap({
       {/* inline style: maplibre-gl.css sets .maplibregl-map { position: relative }, which beats Tailwind */}
       <div ref={mountRef} style={{ position: 'absolute', inset: 0 }} />
       <canvas ref={windRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+      <canvas ref={fluxRef} className="absolute inset-0 w-full h-full pointer-events-none" />
     </div>
   );
 }
