@@ -3,19 +3,28 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { Globe2, Map as MapIcon, Loader2, X, Info, Pause, Play, RefreshCw, AlertTriangle, Wind, RotateCw, Satellite } from 'lucide-react';
+import { Globe2, Map as MapIcon, Loader2, X, Info, Pause, Play, RefreshCw, AlertTriangle, Wind, RotateCw, Satellite, ShieldAlert } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { MAX_COLUMN, MIN_COLUMN, type GlobeApi, type GlobeFrames, type HoverInfo } from '../components/globe/GlobeCanvas';
 import type { FlatMapApi } from '../components/globe/FlatMap';
 import { fetchGlobalSnapshot, hoursAgo, syntheticSnapshot, type GlobalSnapshot } from '../components/globe/globeData';
 import { explainRegion } from '../components/globe/regionInsights';
 import type { FlowRequest, FlowResult, FlowProgress } from '../components/globe/globeFlow.worker';
+import TransboundaryPanel from '../components/globe/TransboundaryPanel';
+import { fetchTransboundaryFlux, type TransboundaryResponse } from '../components/globe/transboundaryData';
 
 // WebGL needs the browser: render the canvas on the client only
 const GlobeCanvas = dynamic(() => import('../components/globe/GlobeCanvas'), { ssr: false });
 const FlatMap = dynamic(() => import('../components/globe/FlatMap'), { ssr: false });
 
 const FADE_MS = 450; // cross-fade between the unrolled globe and the 2-D map
+const PANEL_W = 440; // transboundary side panel width (px, sm and up)
+const PANEL_GAP = 16;
+/** Map zooms for the transboundary targets: an airshed, and a border gateway. The 0.5° satellite grid
+ * (~55 km cells) turns into blur beyond zoom ~7, so the backend's street-level zooms are capped. */
+const REGION_ZOOM = 6.5;
+const GATEWAY_ZOOM = 7.4;
+const zoomToDistance = (zoom: number) => (zoom >= GATEWAY_ZOOM ? 1.3 : 1.45);
 
 const FRAME_HOURS = Array.from({ length: 13 }, (_, h) => h); // +0 .. +12 h
 const NEWEST_HOURS = 6;
@@ -73,6 +82,48 @@ export default function GlobePage() {
   const [transitioning, setTransitioning] = useState(false);
   const [flatMounted, setFlatMounted] = useState(false);
   const [flatVisible, setFlatVisible] = useState(false);
+  const [showTransboundary, setShowTransboundary] = useState(false);
+  const [transboundaryData, setTransboundaryData] = useState<TransboundaryResponse | null>(null);
+  const [transboundaryLoading, setTransboundaryLoading] = useState(false);
+  const [activeRegion, setActiveRegion] = useState<string>('delhi');
+
+  // Room taken by the side panel on the right (0 on phones, where the panel covers the screen)
+  const mainRef = useRef<HTMLElement>(null);
+  const [panelSpace, setPanelSpace] = useState(0);
+  useEffect(() => {
+    const main = mainRef.current;
+    if (!main) return;
+    const measure = () => setPanelSpace(main.clientWidth >= 900 ? PANEL_W + PANEL_GAP : 0);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(main);
+    return () => observer.disconnect();
+  }, []);
+  const panelOffset = showTransboundary ? panelSpace : 0;
+
+  // Keep the globe / map centred in the visible space beside the panel
+  useEffect(() => {
+    if (transitioning) return;
+    if (mode === '3d') globeApi.current?.setViewShift(panelOffset / 2);
+    else flatApi.current?.setRightPadding(panelOffset);
+  }, [panelOffset, mode, transitioning]);
+
+  /** Fly to a transboundary target; ``zoom`` from the panel is clamped to what the 0.5° data can show. */
+  const handleFocusRegion = useCallback(
+    (lat: number, lon: number, zoom = 8.5) => {
+      if (transitioning) return;
+      // the panel sends the airshed zoom, or the airshed zoom + 1.2 for a border gateway
+      const isGateway = zoom > (transboundaryData?.zoom ?? 8.5) + 0.5;
+      const z = isGateway ? GATEWAY_ZOOM : REGION_ZOOM;
+      if (mode === '2d') flatApi.current?.flyTo({ lat, lon, zoom: z }, panelOffset);
+      else globeApi.current?.focus(lat, lon, zoomToDistance(z));
+    },
+    [mode, transitioning, transboundaryData?.zoom, panelOffset],
+  );
+
+  const handleSelectRegion = useCallback((regionId: string) => {
+    setActiveRegion(regionId);
+  }, []);
 
   /**
    * 3-D -> 2-D: the sphere unrolls into a Web-Mercator sheet around the current view, then the MapLibre map
@@ -85,6 +136,7 @@ export default function GlobePage() {
     try {
       const globe = await whenSet(globeApi);
       if (mode === '3d') {
+        await globe.setViewShift(0, 300); // the unroll is computed for a centred view
         setFlatMounted(true);
         const [view, flat] = await Promise.all([globe.flatten(1300), whenSet(flatApi)]);
         flat.jumpTo(view);
@@ -95,6 +147,7 @@ export default function GlobePage() {
         setMode('2d');
       } else {
         const flat = await whenSet(flatApi);
+        await flat.setRightPadding(0, 300);
         let view = flat.getView();
         view.lat = Math.max(-68, Math.min(68, view.lat));
         const [zMin, zMax] = globe.zoomRange(view.lat);
@@ -186,6 +239,39 @@ export default function GlobePage() {
     };
   }, [load]);
 
+  // Transboundary atmospheric flux computation / fetch
+  useEffect(() => {
+    if (!snapshot) return;
+    let active = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading flag for the fetch this effect starts
+    setTransboundaryLoading(true);
+    fetchTransboundaryFlux(24, activeRegion, undefined, snapshot)
+      .then((data) => {
+        if (active) {
+          setTransboundaryData(data);
+          setTransboundaryLoading(false);
+        }
+      })
+      .catch(() => {
+        if (active) setTransboundaryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [snapshot, activeRegion]);
+
+  const focusedRegion = useRef<string | null>(null);
+  useEffect(() => {
+    if (!showTransboundary) {
+      focusedRegion.current = null;
+      return;
+    }
+    const d = transboundaryData;
+    if (!d?.center || !d.region_id || focusedRegion.current === d.region_id) return;
+    focusedRegion.current = d.region_id;
+    handleFocusRegion(d.center[1], d.center[0], d.zoom ?? REGION_ZOOM);
+  }, [showTransboundary, transboundaryData, handleFocusRegion]);
+
   // Drift playback: advance the fractional frame index; loop after +12 h
   useEffect(() => {
     if (!playing) return;
@@ -249,14 +335,17 @@ export default function GlobePage() {
         <Sidebar />
       </div>
 
-      <main className="relative flex-1 h-full overflow-hidden bg-[radial-gradient(ellipse_at_center,#10182b_0%,#07090f_70%)]">
+      <main ref={mainRef} className="relative flex-1 h-full overflow-hidden bg-[radial-gradient(ellipse_at_center,#10182b_0%,#07090f_70%)]">
         <GlobeCanvas
           data={frames}
           frameIndex={frameIndex}
           highlightNewest={highlightNewest}
           newestHours={NEWEST_HOURS}
-          autoRotate={autoRotate && !hover && !selected && mode === '3d' && !transitioning}
+          autoRotate={autoRotate && !hover && !selected && !showTransboundary && mode === '3d' && !transitioning}
           showWind={showWind}
+          fluxVectors={showTransboundary ? transboundaryData?.vectors : null}
+          gateways={showTransboundary ? (transboundaryData?.gateways || transboundaryData?.summary?.gateways) : null}
+          showFlux={showTransboundary}
           onHover={onHover}
           onSelect={onSelect}
           outline={insight?.outline ?? null}
@@ -277,6 +366,9 @@ export default function GlobePage() {
               highlightNewest={highlightNewest}
               newestHours={NEWEST_HOURS}
               showWind={showWind && flatVisible}
+              fluxVectors={showTransboundary ? transboundaryData?.vectors : null}
+              gateways={showTransboundary ? (transboundaryData?.gateways || transboundaryData?.summary?.gateways) : null}
+              showFlux={showTransboundary}
               onHover={onHover}
               onSelect={onSelect}
               outline={insight?.outline ?? null}
@@ -285,33 +377,77 @@ export default function GlobePage() {
           </div>
         )}
 
-        {/* 3-D globe <-> 2-D map */}
-        <div
-          role="radiogroup"
-          aria-label="Globe or flat map"
-          className="absolute z-10 right-3 sm:right-4 top-1/2 -translate-y-1/2 flex p-0.5 rounded-full bg-[#11141d]/90 border border-[#2e3547] backdrop-blur-md shadow-xl"
-        >
-          <span
-            aria-hidden
-            className="absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] rounded-full bg-blue-600 shadow transition-transform duration-500 ease-[cubic-bezier(0.65,0,0.35,1)]"
-            style={{ transform: mode === '2d' ? 'translateX(100%)' : 'translateX(0)' }}
+        {/* CAQM Transboundary Attribution Panel */}
+        {showTransboundary && (
+          <TransboundaryPanel
+            data={transboundaryData}
+            loading={transboundaryLoading}
+            activeRegion={activeRegion}
+            onSelectRegion={handleSelectRegion}
+            onClose={() => setShowTransboundary(false)}
+            onFocusRegion={handleFocusRegion}
           />
-          {(['3d', '2d'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              role="radio"
-              aria-checked={mode === m}
-              disabled={transitioning || phase !== 'ready'}
-              onClick={() => mode !== m && toggleView()}
-              className={`relative z-10 flex items-center justify-center gap-1.5 w-[4.25rem] h-8 rounded-full text-[11px] font-semibold transition-colors cursor-pointer disabled:cursor-wait ${
-                mode === m ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+        )}
+
+        {/* Right-edge controls: 3-D / 2-D and cross-border flux; they slide left beside the open panel */}
+        <div
+          className="absolute z-30 right-3 sm:right-4 top-1/2 -translate-y-1/2 flex flex-col items-end gap-2.5 transition-[margin,top] duration-500 ease-[cubic-bezier(0.65,0,0.35,1)]"
+          // beside an open panel the stack drops towards the time controls, clear of the focused airshed
+          style={{ marginRight: panelOffset, top: panelOffset ? "calc(100% - 17rem)" : "50%" }}
+        >
+          <div
+            role="radiogroup"
+            aria-label="Globe or flat map"
+            className="relative flex p-1 rounded-full bg-[#11141d]/90 border border-[#2e3547] backdrop-blur-md shadow-xl"
+          >
+            <span
+              aria-hidden
+              className="absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded-full bg-blue-600 shadow transition-transform duration-500 ease-[cubic-bezier(0.65,0,0.35,1)]"
+              style={{ transform: mode === '2d' ? 'translateX(100%)' : 'translateX(0)' }}
+            />
+            {(['3d', '2d'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={mode === m}
+                disabled={transitioning || phase !== 'ready'}
+                onClick={() => mode !== m && toggleView()}
+                className={`relative z-10 flex items-center justify-center gap-1.5 w-20 h-9 rounded-full text-xs font-semibold transition-colors cursor-pointer disabled:cursor-wait ${
+                  mode === m ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                {m === '3d' ? <Globe2 className="w-4 h-4" /> : <MapIcon className="w-4 h-4" />}
+                {m === '3d' ? '3D' : '2D'}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowTransboundary((prev) => !prev)}
+            aria-pressed={showTransboundary}
+            aria-label="Cross-border NO₂ flow"
+            className={`group flex items-center gap-2.5 h-11 pl-3 pr-3.5 rounded-full text-[13px] font-semibold border shadow-xl backdrop-blur-md cursor-pointer transition-colors ${
+              showTransboundary
+                ? 'bg-sky-600 border-sky-400 text-white'
+                : 'bg-[#11141d]/90 border-[#2e3547] text-zinc-100 hover:border-sky-400/70'
+            }`}
+          >
+            <span
+              className={`flex items-center justify-center w-7 h-7 rounded-full ${
+                showTransboundary ? 'bg-white/20' : 'bg-sky-500/15 text-sky-300'
               }`}
             >
-              {m === '3d' ? <Globe2 className="w-3.5 h-3.5" /> : <MapIcon className="w-3.5 h-3.5" />}
-              {m === '3d' ? '3D' : '2D'}
-            </button>
-          ))}
+              <ShieldAlert className="w-4 h-4" />
+            </span>
+            <span className="flex flex-col items-start leading-tight">
+              <span>Cross-border flow</span>
+              <span className={`text-[10px] font-normal ${showTransboundary ? 'text-sky-100' : 'text-zinc-400'}`}>
+                {(transboundaryData?.summary?.external_attribution_pct ?? transboundaryData?.delhi_summary?.external_attribution_pct) != null ? `${transboundaryData?.summary?.external_attribution_pct ?? transboundaryData?.delhi_summary?.external_attribution_pct}% of Delhi's NO₂ from outside` : 'Whose pollution is it?'}
+              </span>
+            </span>
+          </button>
         </div>
 
         {/* Title and data status */}
@@ -441,7 +577,7 @@ export default function GlobePage() {
         )}
 
         {/* Legend */}
-        <div className="hidden lg:block absolute top-4 right-4 z-10 w-56 p-3 rounded-lg bg-[#11141d]/90 border border-[#2e3547] backdrop-blur-md shadow-xl text-[10px] space-y-1.5">
+        <div style={showTransboundary ? { display: 'none' } : undefined} className="hidden lg:block absolute top-4 right-4 z-10 w-56 p-3 rounded-lg bg-[#11141d]/90 border border-[#2e3547] backdrop-blur-md shadow-xl text-[10px] space-y-1.5">
           <div className="text-zinc-300 font-semibold text-[11px]">Tropospheric NO₂ column</div>
           <div
             className="h-2.5 rounded"
@@ -459,7 +595,7 @@ export default function GlobePage() {
         </div>
 
         {/* Controls */}
-        <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 z-10 w-[min(640px,calc(100%-1.5rem))] p-3 rounded-lg bg-[#11141d]/90 border border-[#2e3547] backdrop-blur-md shadow-xl text-xs space-y-2">
+        <div style={{ marginLeft: -panelOffset / 2, width: `min(640px, calc(100% - 1.5rem - ${panelOffset}px))` }} className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 z-10 transition-[margin,width] duration-500 p-3 rounded-lg bg-[#11141d]/90 border border-[#2e3547] backdrop-blur-md shadow-xl text-xs space-y-2">
           <div className="flex items-center gap-3">
             <button
               type="button"
