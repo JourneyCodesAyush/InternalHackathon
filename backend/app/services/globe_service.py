@@ -34,3 +34,15 @@ async def get_global_no2(hours: int = 24) -> dict:
             "v": {"scale": 0.01, "data": _int16(snap["v"], 0.01)},  # m/s, northward
         },
     }
+
+
+async def get_transboundary_flux(hours: int = 24, region: str = "delhi") -> dict:
+    """Calculate cross-border NO2 mass transport fluxes and regional attribution."""
+    from ml_engine.transboundary import calculate_transboundary_flux
+
+    try:
+        snap = await asyncio.to_thread(global_no2, hours)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Global NO2 data unavailable: {exc}") from exc
+    return calculate_transboundary_flux(snap["no2"], snap["u"], snap["v"], snap["meta"], target_region=region)
+

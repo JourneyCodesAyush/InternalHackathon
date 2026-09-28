@@ -3,10 +3,8 @@
  * statistics from the displayed layer, and curated explanations of the main sources and sinks.
  * Everything is local (no API calls), so it also works in offline / demo mode.
  */
-import { feature } from 'topojson-client';
-import type { GeometryCollection, Topology } from 'topojson-specification';
 import type { Feature, MultiPolygon, Polygon, Position } from 'geojson';
-import countriesTopo from 'world-atlas/countries-110m.json';
+import { worldCountries } from './countries';
 
 type Continent = 'Asia' | 'Europe' | 'Africa' | 'North America' | 'South America' | 'Oceania' | 'Antarctica';
 
@@ -288,8 +286,8 @@ let shapes: CountryShape[] | null = null;
 
 function countryShapes(): CountryShape[] {
   if (shapes) return shapes;
-  const topo = countriesTopo as unknown as Topology;
-  const fc = feature(topo, topo.objects.countries as GeometryCollection);
+
+  const fc = worldCountries();
   shapes = (fc.features as Feature<Polygon | MultiPolygon, { name: string }>[]).map((f) => {
     const polygons = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
     let [w, s, e, n] = [180, 90, -180, -90];
