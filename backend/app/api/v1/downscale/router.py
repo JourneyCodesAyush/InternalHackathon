@@ -47,6 +47,93 @@ async def get_available_dates(
 
 
 @router.get(
+    "/hotspots",
+    summary="Get top NO2 pollution hotspots across the region",
+    tags=["downscale"],
+)
+async def get_hotspots(
+    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format (default 2025-11-05)"),
+    limit: int = 8,
+) -> dict:
+    """
+    Extract highest NO2 concentration coordinates from the uploaded Sentinel-5P GeoTIFFs,
+    returning coordinates, measured NO2 level (µg/m³), locality name, and severity.
+    """
+    from app.services.upload_data import read_day, available_dates
+
+    dates = available_dates()
+    # Default to 2025-11-05 which contains real Sentinel-5P high-concentration plumes
+    default_day = "2025-11-05" if "2025-11-05" in dates else (dates[-1] if dates else "2025-11-05")
+    target_date = date if date and date in dates else default_day
+    try:
+        arr, t, used = read_day(target_date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read NO2 data: {e}")
+
+    valid_mask = ~np.isnan(arr)
+    valid_indices = np.argwhere(valid_mask)
+    sorted_pts = sorted(valid_indices, key=lambda idx: arr[idx[0], idx[1]], reverse=True)
+
+    localities = [
+        (19.0185, 72.9180, "Chembur-Trombay Industrial Basin", "Petroleum refining and petrochemical complexes"),
+        (18.9810, 72.8940, "Mahul Petrochemical & Port Corridor", "Heavy oil storage terminals and fertilizer manufacturing"),
+        (19.0740, 73.0080, "Vashi-Turbhe Trans-Harbor Zone", "High-density freight transit and light industrial node"),
+        (18.9420, 72.9520, "JNPT Coastal Freight Terminal", "Heavy container logistics and marine diesel emissions"),
+        (19.0620, 72.8710, "Kurla-BKC Transport Nexus", "Major vehicular arterial convergence"),
+        (18.9875, 72.8925, "Wadala Monorail & Freight Yard", "Harbor rail freight depot and transit corridor"),
+        (19.0225, 72.9975, "Nerul Industrial District", "Electronics and engineering manufacturing zone"),
+        (18.8920, 72.9410, "Uran Energy Generation Hub", "Thermal energy generation and gas turbine landing"),
+        (19.1620, 72.9750, "Thane Creek Marine Corridor", "Marine industrial channel and transport artery"),
+        (19.2280, 73.0840, "Kalyan-Dombivli Industrial Valley", "Heavy machinery, dye works, and chemical processing"),
+        (19.0925, 73.0325, "Ghansoli-MIDC Tech & Manufacturing", "High-tech manufacturing and logistics facilities"),
+        (18.9525, 72.9275, "Elephanta Maritime Passage", "Coastal transit channel and harbor operations"),
+    ]
+
+    hotspots = []
+    min_dist_sq = 0.038 ** 2  # ~4.2 km spatial separation to prevent collinear grid line artifacts
+
+    for r, c in sorted_pts:
+        if len(hotspots) >= limit:
+            break
+        lon = round(float(t.c + t.a * (c + 0.5)), 4)
+        lat = round(float(t.f + t.e * (r + 0.5)), 4)
+        val = round(float(arr[r, c]), 1)
+
+        # Skip if too close to an existing hotspot to ensure natural regional distribution
+        if any((lat - h["lat"]) ** 2 + (lon - h["lon"]) ** 2 < min_dist_sq for h in hotspots):
+            continue
+
+        # Match closest locality
+        best_name = f"Grid Cluster ({lat:.3f}°N, {lon:.3f}°E)"
+        best_desc = "High tropospheric NO₂ column density detected by Sentinel-5P"
+        min_dist = float("inf")
+        for loc_lat, loc_lon, loc_name, loc_desc in localities:
+            dist = (lat - loc_lat) ** 2 + (lon - loc_lon) ** 2
+            if dist < min_dist and dist < 0.005:
+                min_dist = dist
+                best_name = loc_name
+                best_desc = loc_desc
+
+        severity = "CRITICAL" if val >= 300 else ("HIGH" if val >= 200 else "ELEVATED")
+        hotspots.append({
+            "id": f"hotspot-{len(hotspots) + 1}",
+            "lat": lat,
+            "lon": lon,
+            "no2": val,
+            "name": best_name,
+            "description": best_desc,
+            "severity": severity,
+            "unit": "µg/m³",
+        })
+
+    return {
+        "date": used,
+        "count": len(hotspots),
+        "hotspots": hotspots,
+    }
+
+
+@router.get(
     "/map",
     response_model=DownscaleMapResponse,
     summary="Get downscaled air quality map",

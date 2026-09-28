@@ -14,6 +14,8 @@ import {
   X,
   Activity,
   Bot,
+  Radio,
+  Globe2,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
@@ -129,6 +131,18 @@ export default function Navbar() {
           >
             <Bot className="w-3.5 h-3.5" />
             Agent Portal
+          </Link>
+
+          <Link
+            href="/swarm"
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              pathname === '/swarm'
+                ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1b202e]'
+            }`}
+          >
+            <Globe2 className="w-3.5 h-3.5 text-cyan-400" />
+            Cesium 3D
           </Link>
         </nav>
       </div>

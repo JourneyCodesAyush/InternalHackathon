@@ -9,7 +9,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from app.agent.graph import run_agent
+try:
+    from app.agent.graph import run_agent
+except ImportError:
+    run_agent = None
 from app.dependencies import get_current_user
 
 log = logging.getLogger("agent.api")
