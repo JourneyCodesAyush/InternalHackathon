@@ -3,6 +3,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Camera, AlertTriangle } from 'lucide-react';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const UPLOAD_EVERY_MS = 10_000; // a frame for the backend DCP model (report haze readings)
+
 interface WebcamHazeProps {
   isSimulating: boolean;
 }
@@ -27,6 +30,23 @@ export default function WebcamHaze({ isSimulating }: WebcamHazeProps) {
     }
     let stream: MediaStream | null = null;
     let animationFrame: number;
+    let lastUpload = 0;
+
+    // Send a frame to the backend (OpenCV Dark Channel Prior) so reports can use the haze readings
+    const uploadFrame = (video: HTMLVideoElement) => {
+      const snap = document.createElement('canvas');
+      snap.width = 320;
+      snap.height = Math.round((320 * (video.videoHeight || 240)) / (video.videoWidth || 320));
+      snap.getContext('2d')?.drawImage(video, 0, 0, snap.width, snap.height);
+      snap.toBlob((blob) => {
+        if (!blob) return;
+        const form = new FormData();
+        form.append('image', blob, 'frame.jpg');
+        fetch(`${API_BASE}/api/v1/drone/haze`, { method: 'POST', body: form }).catch(() => {
+          /* offline: the live index on screen still works */
+        });
+      }, 'image/jpeg', 0.8);
+    };
 
     const startCamera = async () => {
       try {
@@ -87,6 +107,11 @@ export default function WebcamHaze({ isSimulating }: WebcamHazeProps) {
           
           // Simple smoothing
           setHazeIndex(prev => prev * 0.8 + index * 0.2);
+
+          if (Date.now() - lastUpload > UPLOAD_EVERY_MS) {
+            lastUpload = Date.now();
+            uploadFrame(video);
+          }
         }
       }
       

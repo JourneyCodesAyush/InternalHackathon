@@ -22,7 +22,7 @@ from .analysis import analyse_run
 from .llm import generate_narrative
 from .pdf import build_pdf, build_unavailable_pdf, resolve_fonts
 from .texts import (ANOMALY, BAND, LANGUAGES, SOURCE, STATUS, forecast_texts, notice_text, recommendations, summary_text,
-                    trend_texts, anomaly_lines)
+                    trend_texts, anomaly_lines, flight_plan_lines, haze_texts)
 
 log = logging.getLogger(__name__)
 
@@ -231,6 +231,8 @@ def public_facts(facts: dict, language: str = "en") -> dict:
         "trend": [_plain(t) for t in trend_texts(facts, language)],
         "recommendations": [_plain(t) for t in recommendations(facts, language)],
         "anomalies": [_plain(t) for t in anomaly_lines(facts, language)],
+        "haze": _plain(haze_texts(facts, language)[0]),
+        "flight_plans": [_plain(t) for t in flight_plan_lines(facts, language)],
         "notice": notice_text(facts["notice"], language) if facts.get("notice") else None,
     }
     return out

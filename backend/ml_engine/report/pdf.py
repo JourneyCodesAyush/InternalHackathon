@@ -27,7 +27,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import (Image as RLImage, KeepTogether, ListFlowable, ListItem, Paragraph,
+from reportlab.platypus import (Image as RLImage, KeepTogether, ListFlowable, ListItem, PageBreak, Paragraph,
                                 SimpleDocTemplate, Spacer, Table, TableStyle)
 
 from . import texts as tx
@@ -270,6 +270,114 @@ def _anomaly_section(facts: dict, lang: str, st: dict, page_w: float) -> list:
             Spacer(1, 4), ListFlowable(items, bulletType="bullet", start="•", leftIndent=12)]
 
 
+DECISION_COLOURS = {"go": "#2e7d32", "conditional": "#ef6c00", "no_go": "#c62828"}
+
+
+def _haze_section(facts: dict, lang: str, st: dict, page_w: float) -> list:
+    """Drone camera haze (DCP) and its combination with the NO2 model."""
+    D = tx.DRONE_TXT[lang]
+    hz = facts.get("haze")
+    out = [Paragraph(D["h_haze"], st["h2"])]
+    if not hz:
+        return out + [Paragraph(D["haze_none"], st["body"])]
+    last = hz["latest"]
+    pos = "" if last.get("lat") is None else f", {last['lat']:.4f}°N {last['lon']:.4f}°E"
+    labels = D["haze_rows"]
+    rows = [[labels[0], f"<b>{last['haze_index']:.2f}</b>"],
+            [labels[1], D["haze_class"].get(last["class"], last["class"])],
+            [labels[2], f"{last['transmission_mean']:.2f}"],
+            [labels[3], f"{(last.get('hazy_share') or 0) * 100:.0f}%"],
+            [labels[4], f"{hz['count']} ({hz['mean']:.2f} / {hz['max']:.2f})"],
+            [labels[5], f"{last['time'].replace('T', ' ').replace('Z', ' UTC')}{pos}"]]
+    table = _table(rows, st, [page_w * 0.5, page_w * 0.5], header=False)
+    out += [Paragraph(D["haze_intro"], st["small"]), Spacer(1, 4), table, Spacer(1, 6),
+            Paragraph(f"<b>{D['h_combined']}:</b> {tx.haze_texts(facts, lang)[0]}", st["body"])]
+    return out
+
+
+def _plan_block(fp: dict, facts: dict, lang: str, st: dict, page_w: float, compact: bool = False) -> list:
+    """Map, route, altitude/airspace, battery, phases and waypoints of one plan."""
+    from .flightplan import DRONE, route_map
+
+    D = tx.DRONE_TXT[lang]
+    decision = Table([[Paragraph(f"<b>{D['decision'][fp['decision']]}</b>"
+                                 + (" — " + "; ".join(D["issue"][i] for i in fp["issues"]) if fp["issues"] else ""),
+                                 st["badged"])]], colWidths=[page_w])
+    decision.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(DECISION_COLOURS[fp["decision"]])),
+                                  ("LEFTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 5),
+                                  ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    img = route_map(fp, facts.get("surface_map"), facts.get("grid"), _colourise, water=facts.get("water_mask"))
+    from PIL import Image as PILImage
+
+    w_px, h_px = PILImage.open(img).size
+    img.seek(0)
+    map_w = min(page_w, 11 * cm * w_px / h_px)  # at most ~11 cm tall
+    home, tgt, wind, el, bat, air = fp["home"], fp["target"], fp["wind"], fp["elevation"], fp["battery"], fp["airspace"]
+    m = lambda v: "—" if v is None else f"{v} m"  # noqa: E731
+    r = D["rows_route"]
+    route_rows = [[r[0], f"{escape(home['name'])} ({home['lat']:.4f}°N, {home['lon']:.4f}°E)"],
+                  [r[1], f"{escape(tgt['near'])} ({tgt['lat']:.4f}°N, {tgt['lon']:.4f}°E)"],
+                  [r[2], f"{fp['distance_km']:.2f} km / {fp['round_trip_km']:.2f} km"],
+                  [r[3], f"{fp['bearing_deg']}° ({fp['bearing_compass']}) / {fp['return_bearing_deg']}°"],
+                  [r[4], f"{wind['speed_ms']} m/s {wind['from_compass']} ({wind['from_deg']}°)"],
+                  [r[5], f"{wind['outbound_headwind_ms']:+.1f} / {wind['return_headwind_ms']:+.1f} m/s"],
+                  [r[6], f"{wind['crosswind_ms']} m/s / {wind['crab_deg']}°"],
+                  [r[7], f"{fp['ground_speed_out_ms']} / {fp['ground_speed_back_ms']} m/s"]]
+    a = D["rows_alt"]
+    alt_rows = [[a[0], f"{m(el['home_m'])} / {m(el['target_m'])}"],
+                [a[1], "—" if el["gain_m"] is None else f"{el['gain_m']:+d} m"],
+                [a[2], m(el["max_terrain_m"])],
+                [a[3], f"{el['cruise_amsl_m']} m / {el['cruise_agl_m']:.0f} m"],
+                [a[4], f"{el['survey_agl_m']:.0f} m"],
+                [a[5], f"{escape(air['nearest_airport'] or '—')} ({air['distance_km']} km)"],
+                [a[6], D["zone"][air["zone"]]]]
+    b = D["rows_batt"]
+    batt_rows = [[b[0], f"{fp['total_time_min']} {D['min']}"],
+                 [b[1], f"<b>{fp['total_mah']} mAh</b>"],
+                 [b[2], f"{bat['capacity_mah']:.0f} / {bat['usable_mah']} mAh"],
+                 [b[3], f"{max(bat['remaining_pct'], 0)}%"],
+                 [b[4], "—" if bat["max_radius_km"] is None else f"{bat['max_radius_km']} km"]]
+    phase_rows = [D["phase_head"]] + [[ph["phase"], f"{ph['time_s'] // 60}:{ph['time_s'] % 60:02d}", str(ph["mah"])]
+                                      for ph in fp["phases"]]
+    wp_rows = [D["wp_head"]] + [[w["name"], f"{w['lat']:.5f}", f"{w['lon']:.5f}", f"{w['alt_agl']:.0f} m",
+                                 D["action"][w["action"]]] for w in fp["waypoints"]]
+    sv = fp["survey"]
+    if compact:  # the plan that will not be flown: decision and the facts behind it only
+        return [decision, Spacer(1, 6), _table(route_rows[:4], st, [page_w * 0.36, page_w * 0.64], header=False),
+                Spacer(1, 4), _table(batt_rows, st, [page_w * 0.36, page_w * 0.64], header=False)]
+    return [decision, Spacer(1, 6),
+            RLImage(img, width=map_w, height=map_w * h_px / w_px), Spacer(1, 6),
+            KeepTogether([_table(route_rows, st, [page_w * 0.36, page_w * 0.64], header=False)]), Spacer(1, 6),
+            KeepTogether([_table(alt_rows, st, [page_w * 0.36, page_w * 0.64], header=False)]), Spacer(1, 6),
+            KeepTogether([_table(batt_rows, st, [page_w * 0.36, page_w * 0.64], header=False)]), Spacer(1, 6),
+            KeepTogether([_table(phase_rows, st, [page_w * 0.6, page_w * 0.18, page_w * 0.22])]), Spacer(1, 6),
+            KeepTogether([_table(wp_rows, st, [page_w * 0.14, page_w * 0.2, page_w * 0.2, page_w * 0.18, page_w * 0.28])]),
+            Spacer(1, 4),
+            Paragraph(D["survey"].format(laps=sv["laps"], r=sv["orbit_radius_m"], alt=sv["altitude_agl_m"], sampling=sv["sampling"]),
+                      st["small"]),
+            Paragraph(D["unit_note"].format(mass=DRONE["mass_kg"], cap=DRONE["battery_mah"], v=DRONE["voltage_v"],
+                                            hover=DRONE["hover_power_w"]), st["small"])]
+
+
+def _flight_plan_sections(facts: dict, lang: str, st: dict, page_w: float) -> list:
+    """One pre-inspection flight plan per place needing inspection, each on its own page."""
+    D = tx.DRONE_TXT[lang]
+    out = []
+    for n, fp in enumerate(facts.get("flight_plans") or [], start=1):
+        out += [PageBreak(), Paragraph(D["h_plan"].format(n=n, place=escape(fp["target"]["near"])), st["h2"]),
+                Paragraph(D["plan_intro"], st["small"]), Spacer(1, 6)]
+        rel = fp.get("relocation")
+        out += _plan_block(fp, facts, lang, st, page_w, compact=bool(rel))
+        if rel:
+            out += [Spacer(1, 8), Paragraph(D["relocation"].format(lat=rel["home"]["lat"], lon=rel["home"]["lon"],
+                                                                   km=rel["distance_km"]), st["body"]), Spacer(1, 4)]
+            out += _plan_block(rel, facts, lang, st, page_w)
+        out += [Spacer(1, 6), Paragraph(D["h_checklist"], st["h2"]),
+                ListFlowable([ListItem(Paragraph(c, st["body"]), leftIndent=12) for c in D["checklist"]],
+                             bulletType="bullet", start="•", leftIndent=12)]
+    return out
+
+
 def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback: bool = False) -> bytes:
     regular, bold, deva = resolve_fonts()
     st = _styles(regular, bold, shaping=deva)
@@ -382,6 +490,7 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
         story += [Paragraph(L["h_map"], st["h2"]), Paragraph(L["no_map"], st["body"])]
 
     story += _anomaly_section(facts, lang, st, page_w)
+    story += _haze_section(facts, lang, st, page_w)
 
     story += [Paragraph(L["h_exposure"], st["h2"])]
     story += [Paragraph(tx.population_text(facts, lang), st["body"])] if pop else [Paragraph(L["no_population"], st["body"])]
@@ -414,6 +523,8 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
     story += [Paragraph(L["h_reco"], st["h2"]),
               ListFlowable([ListItem(Paragraph(r, st["body"]), leftIndent=12) for r in recos], bulletType="bullet",
                            start="•", leftIndent=12)]
+
+    story += _flight_plan_sections(facts, lang, st, page_w)
 
     story += [Paragraph(L["h_method"], st["h2"]), Paragraph(tx.method_text(facts, lang), st["small"]), Spacer(1, 4),
               Paragraph(L["narrative_ai"] if narrative else L["narrative_template"], st["small"])]

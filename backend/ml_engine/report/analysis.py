@@ -434,7 +434,25 @@ def analyse_run(run_dir: str | Path, date: str, area_name: str) -> dict:
         except OSError:
             log.warning("Could not write facts cache %s", cache)
     facts["area"]["name"] = area_name
+    # live parts (not cached): the drone's DCP haze readings and the pre-inspection flight plans built on them
+    facts["haze"] = _section("haze", lambda: _haze_summary(), None)
+    facts["flight_plans"] = _section("flight_plans", lambda: _flight_plans(run_dir, facts), [])
     return facts
+
+
+def _haze_summary() -> dict | None:
+    from .haze import summary
+
+    return summary(max_age_h=72)
+
+
+def _flight_plans(run_dir: Path, facts: dict) -> list[dict]:
+    from .flightplan import plans_for
+
+    static_path = run_dir / "static_fine.nc"
+    static = xr.load_dataset(static_path, engine="h5netcdf") if static_path.exists() else None
+    latest = (facts.get("haze") or {}).get("latest")
+    return plans_for(facts, static, facts.get("grid"), latest)
 
 
 def _compute_facts(run_dir: Path, date: str, area_name: str = "") -> dict:

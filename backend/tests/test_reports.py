@@ -197,3 +197,22 @@ async def test_analysis_unauthenticated(client):
               "end_date": "2024-01-31"},
     )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_drone_haze_endpoint(auth_client, tmp_path, monkeypatch):
+    import cv2
+    import numpy as np
+
+    from ml_engine.report import haze
+
+    monkeypatch.setattr(haze, "STORE", tmp_path)
+    img = (np.random.default_rng(0).integers(0, 255, (120, 160, 3))).astype(np.uint8)
+    ok, jpg = cv2.imencode(".jpg", img)
+    r = await auth_client.post("/api/v1/drone/haze", files={"image": ("f.jpg", jpg.tobytes(), "image/jpeg")},
+                               data={"lat": "19.0", "lon": "72.9"})
+    assert r.status_code == 200 and 0 <= r.json()["haze_index"] <= 1 and r.json()["lat"] == 19.0
+    assert (await auth_client.post("/api/v1/drone/haze", data={"haze_index": "0.7"})).json()["class"] == "dense"
+    assert (await auth_client.post("/api/v1/drone/haze", data={})).status_code == 422
+    body = (await auth_client.get("/api/v1/drone/haze")).json()
+    assert body["summary"]["count"] == 2

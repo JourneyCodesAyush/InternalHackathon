@@ -488,6 +488,165 @@ def anomaly_lines(facts: dict, lang: str) -> list[str]:
     return lines
 
 
+DRONE_TXT = {
+    "en": {
+        "h_haze": "Haze (Drone Camera, Dark Channel Prior) with the NO<sub>2</sub> Model",
+        "haze_none": "No drone camera haze reading in the last 72 hours. Run the camera on the Drone portal to add the haze analysis to reports.",
+        "haze_intro": "The drone camera frames are analysed with the Dark Channel Prior (DCP): in clear air most image patches have a colour channel near zero; haze and aerosols lift it towards the sky brightness. The haze index is 1 minus the mean estimated transmission (0 = clear, 1 = opaque).",
+        "haze_rows": ["Latest haze index", "Haze class", "Mean transmission", "Share of view under dense haze", "Readings in the last 72 h (mean / max)", "Reading time and position"],
+        "haze_class": {"clear": "Clear", "light": "Light haze", "moderate": "Moderate haze", "dense": "Dense haze"},
+        "h_combined": "Combined interpretation",
+        "combo": {
+            "haze_high_no2_high": "Haze and NO<sub>2</sub> are both high: combustion smog is likely (traffic, industry or burning emit NO<sub>2</sub> together with smoke and secondary particles). Treat as a priority for inspection and advise sensitive groups to stay indoors.",
+            "haze_high_no2_low": "The air is hazy but NO<sub>2</sub> is not elevated: the haze is more likely fog, humidity, sea salt or dust than fresh combustion. Check visibility and particulate (PM) readings before attributing it to emissions.",
+            "haze_low_no2_high": "NO<sub>2</sub> is high while the air looks clear: the pollution is largely invisible gas from traffic or industrial stacks, which a camera alone would miss. Ground or drone NO<sub>2</sub> sensing is needed to confirm.",
+            "haze_low_no2_low": "Both haze and NO<sub>2</sub> are low: no visible or gaseous pollution episode is indicated.",
+        },
+        "h_plan": "Pre-inspection Drone Flight Plan {n}: {place}",
+        "plan_intro": "A survey flight the drone can fly before officials visit: it measures NO<sub>2</sub> and takes geo-tagged camera frames (haze analysis) over the site so the inspection team knows what to expect.",
+        "decision": {"go": "GO", "conditional": "GO WITH CONDITIONS", "no_go": "NO-GO FROM THIS GROUND STATION"},
+        "issue": {"wind": "wind above the airframe limit", "battery": "round trip exceeds the usable battery",
+                  "airspace": "route within 8 km of an airport (DGCA yellow zone: ATC permission via Digital Sky)",
+                  "visibility": "haze limits visual line of sight"},
+        "rows_route": ["Ground station", "Inspection site", "Distance (one way) / round trip", "Outbound bearing / return bearing",
+                       "Wind (from)", "Headwind out / back", "Crosswind / crab angle", "Ground speed out / back"],
+        "rows_alt": ["Elevation: ground station / site", "Elevation gain", "Highest terrain on the route", "Cruise altitude (AMSL / AGL)",
+                     "Survey altitude (AGL)", "Airspace: nearest airport", "Airspace zone / ceiling"],
+        "zone": {"green": "Green: up to 120 m without permission", "yellow_8_12": "8-12 km from an airport: up to 60 m",
+                 "yellow": "Yellow zone (<8 km): ATC permission required"},
+        "rows_batt": ["Total flight time", "Estimated battery use", "Battery capacity / usable (20% reserve)", "Battery left on landing",
+                      "Maximum radius with this wind"],
+        "phase_head": ["Phase", "Time", "Battery (mAh)"],
+        "wp_head": ["Waypoint", "Latitude", "Longitude", "Altitude (AGL)", "Action"],
+        "action": {"take_off": "Take off", "climb": "Climb", "arrive": "Arrive at site", "survey": "Survey (orbit)",
+                   "depart": "Leave site", "land": "Land"},
+        "survey": "Survey: {laps} orbits of {r:.0f} m radius at {alt:.0f} m AGL; {sampling}.",
+        "relocation": "The site is beyond the battery range of the ground station. Drive to the forward launch point ({lat:.4f}°N, {lon:.4f}°E, {km:.1f} km from the site) and fly this plan:",
+        "h_checklist": "Pre-flight checklist",
+        "checklist": ["Digital Sky: drone UIN registered, remote pilot certificate valid, flight permission (NPNT) for the zone above",
+                      "Weather: wind below 10 m/s, no rain; keep the drone in visual line of sight (check the haze reading)",
+                      "Battery fully charged and balanced; spare pack; confirm return-to-home is set at the ground station",
+                      "NO<sub>2</sub> sensor warmed up and zeroed; camera lens clean; SD card and telemetry link checked",
+                      "Brief the site: avoid flying over crowds or sensitive installations; inform local police if required",
+                      "After landing: upload the NO<sub>2</sub> log and camera frames; compare with this report before the official visit"],
+        "forward": "from the forward launch point", "min": "min", "unit_note": "Energy model: {mass} kg quad, {cap:.0f} mAh {v} V pack, hover {hover:.0f} W; values are planning estimates.",
+    },
+    "hi": {
+        "h_haze": "धुंध (ड्रोन कैमरा, डार्क चैनल प्रायर) और NO<sub>2</sub> मॉडल",
+        "haze_none": "पिछले 72 घंटों में ड्रोन कैमरे की कोई धुंध रीडिंग नहीं है। रिपोर्ट में धुंध विश्लेषण जोड़ने के लिए ड्रोन पोर्टल पर कैमरा चलाएँ।",
+        "haze_intro": "ड्रोन कैमरे के फ्रेम डार्क चैनल प्रायर (DCP) से विश्लेषित किए जाते हैं: साफ़ हवा में अधिकांश हिस्सों में कोई एक रंग चैनल शून्य के पास होता है; धुंध और एरोसोल उसे आकाश की चमक की ओर बढ़ाते हैं। धुंध सूचकांक = 1 − औसत अनुमानित संचरण (0 = साफ़, 1 = अपारदर्शी)।",
+        "haze_rows": ["नवीनतम धुंध सूचकांक", "धुंध श्रेणी", "औसत संचरण", "घनी धुंध वाला दृश्य भाग", "पिछले 72 घंटे की रीडिंग (औसत / अधिकतम)", "रीडिंग का समय और स्थान"],
+        "haze_class": {"clear": "साफ़", "light": "हल्की धुंध", "moderate": "मध्यम धुंध", "dense": "घनी धुंध"},
+        "h_combined": "संयुक्त व्याख्या",
+        "combo": {
+            "haze_high_no2_high": "धुंध और NO<sub>2</sub> दोनों अधिक हैं: दहन से बना स्मॉग संभावित है (यातायात, उद्योग या जलाने से NO<sub>2</sub> के साथ धुआँ और कण निकलते हैं)। निरीक्षण में प्राथमिकता दें और संवेदनशील लोगों को घर के अंदर रहने की सलाह दें।",
+            "haze_high_no2_low": "हवा धुंधली है पर NO<sub>2</sub> अधिक नहीं है: धुंध ताज़ा दहन के बजाय कोहरा, नमी, समुद्री नमक या धूल होने की अधिक संभावना है। उत्सर्जन मानने से पहले दृश्यता और कण (PM) रीडिंग जाँचें।",
+            "haze_low_no2_high": "हवा साफ़ दिखती है पर NO<sub>2</sub> अधिक है: प्रदूषण मुख्यतः यातायात या औद्योगिक चिमनियों की अदृश्य गैस है, जिसे केवल कैमरा नहीं पकड़ सकता। पुष्टि के लिए ज़मीनी या ड्रोन NO<sub>2</sub> मापन ज़रूरी है।",
+            "haze_low_no2_low": "धुंध और NO<sub>2</sub> दोनों कम हैं: कोई दृश्य या गैसीय प्रदूषण घटना नहीं दिखती।",
+        },
+        "h_plan": "निरीक्षण-पूर्व ड्रोन उड़ान योजना {n}: {place}",
+        "plan_intro": "अधिकारियों के आने से पहले ड्रोन द्वारा की जाने वाली सर्वेक्षण उड़ान: यह स्थल पर NO<sub>2</sub> मापता है और भू-टैग किए कैमरा फ्रेम (धुंध विश्लेषण) लेता है, ताकि निरीक्षण दल को पहले से स्थिति पता हो।",
+        "decision": {"go": "उड़ान संभव", "conditional": "शर्तों के साथ संभव", "no_go": "इस ग्राउंड स्टेशन से संभव नहीं"},
+        "issue": {"wind": "हवा ड्रोन की सीमा से अधिक", "battery": "आना-जाना उपयोगी बैटरी से अधिक",
+                  "airspace": "मार्ग हवाई अड्डे से 8 किमी के भीतर (DGCA पीला क्षेत्र: Digital Sky से ATC अनुमति ज़रूरी)",
+                  "visibility": "धुंध दृष्टि-सीमा को सीमित करती है"},
+        "rows_route": ["ग्राउंड स्टेशन", "निरीक्षण स्थल", "दूरी (एक तरफ़) / आना-जाना", "जाने / लौटने की दिशा (बेयरिंग)",
+                       "हवा (से)", "सामने की हवा जाते / लौटते", "आड़ी हवा / क्रैब कोण", "ज़मीनी गति जाते / लौटते"],
+        "rows_alt": ["ऊँचाई: ग्राउंड स्टेशन / स्थल", "ऊँचाई में वृद्धि", "मार्ग पर सबसे ऊँचा भूभाग", "उड़ान ऊँचाई (AMSL / AGL)",
+                     "सर्वेक्षण ऊँचाई (AGL)", "वायुक्षेत्र: निकटतम हवाई अड्डा", "वायुक्षेत्र ज़ोन / सीमा"],
+        "zone": {"green": "हरा: 120 मी. तक बिना अनुमति", "yellow_8_12": "हवाई अड्डे से 8-12 किमी: 60 मी. तक",
+                 "yellow": "पीला क्षेत्र (<8 किमी): ATC अनुमति ज़रूरी"},
+        "rows_batt": ["कुल उड़ान समय", "अनुमानित बैटरी उपयोग", "बैटरी क्षमता / उपयोगी (20% आरक्षित)", "उतरने पर शेष बैटरी",
+                      "इस हवा में अधिकतम त्रिज्या"],
+        "phase_head": ["चरण", "समय", "बैटरी (mAh)"],
+        "wp_head": ["वेपॉइंट", "अक्षांश", "देशांतर", "ऊँचाई (AGL)", "कार्य"],
+        "action": {"take_off": "उड़ान भरना", "climb": "ऊपर चढ़ना", "arrive": "स्थल पर पहुँचना", "survey": "सर्वेक्षण (चक्कर)",
+                   "depart": "स्थल छोड़ना", "land": "उतरना"},
+        "survey": "सर्वेक्षण: {alt:.0f} मी. AGL पर {r:.0f} मी. त्रिज्या के {laps} चक्कर; {sampling}।",
+        "relocation": "स्थल ग्राउंड स्टेशन की बैटरी सीमा से बाहर है। अग्रिम प्रक्षेपण बिंदु ({lat:.4f}°N, {lon:.4f}°E, स्थल से {km:.1f} किमी) तक सड़क से जाएँ और यह योजना उड़ाएँ:",
+        "h_checklist": "उड़ान-पूर्व जाँच सूची",
+        "checklist": ["Digital Sky: ड्रोन UIN पंजीकृत, रिमोट पायलट प्रमाणपत्र वैध, ऊपर दिए ज़ोन के लिए उड़ान अनुमति (NPNT)",
+                      "मौसम: हवा 10 मी./से. से कम, बारिश नहीं; ड्रोन को दृष्टि-सीमा में रखें (धुंध रीडिंग देखें)",
+                      "बैटरी पूरी चार्ज और संतुलित; अतिरिक्त पैक; ग्राउंड स्टेशन पर रिटर्न-टू-होम सेट करें",
+                      "NO<sub>2</sub> सेंसर गर्म और शून्य पर; कैमरा लेंस साफ़; SD कार्ड और टेलीमेट्री लिंक जाँचें",
+                      "स्थल की जानकारी: भीड़ या संवेदनशील स्थानों के ऊपर न उड़ें; आवश्यकता हो तो स्थानीय पुलिस को सूचित करें",
+                      "उतरने के बाद: NO<sub>2</sub> लॉग और कैमरा फ्रेम अपलोड करें; आधिकारिक दौरे से पहले इस रिपोर्ट से तुलना करें"],
+        "forward": "अग्रिम प्रक्षेपण बिंदु से", "min": "मिनट", "unit_note": "ऊर्जा मॉडल: {mass} किग्रा क्वाड, {cap:.0f} mAh {v} V पैक, होवर {hover:.0f} W; मान योजना हेतु अनुमान हैं।",
+    },
+    "mr": {
+        "h_haze": "धुके (ड्रोन कॅमेरा, डार्क चॅनल प्रायर) आणि NO<sub>2</sub> मॉडेल",
+        "haze_none": "मागील 72 तासांत ड्रोन कॅमेऱ्याचे धुके वाचन नाही. अहवालात धुके विश्लेषण जोडण्यासाठी ड्रोन पोर्टलवर कॅमेरा चालवा.",
+        "haze_intro": "ड्रोन कॅमेऱ्याच्या फ्रेमचे डार्क चॅनल प्रायर (DCP) द्वारे विश्लेषण केले जाते: स्वच्छ हवेत बहुतांश भागांमध्ये एखादा रंग चॅनल शून्याजवळ असतो; धुके आणि एरोसोल तो आकाशाच्या तेजाकडे वाढवतात. धुके निर्देशांक = 1 − सरासरी अंदाजित पारेषण (0 = स्वच्छ, 1 = अपारदर्शक).",
+        "haze_rows": ["नवीनतम धुके निर्देशांक", "धुके वर्ग", "सरासरी पारेषण", "दाट धुक्याखालील दृश्य भाग", "मागील 72 तासांतील वाचन (सरासरी / कमाल)", "वाचनाची वेळ आणि स्थान"],
+        "haze_class": {"clear": "स्वच्छ", "light": "हलके धुके", "moderate": "मध्यम धुके", "dense": "दाट धुके"},
+        "h_combined": "एकत्रित अर्थ",
+        "combo": {
+            "haze_high_no2_high": "धुके आणि NO<sub>2</sub> दोन्ही जास्त आहेत: ज्वलनातून तयार झालेले स्मॉग संभवते (वाहतूक, उद्योग किंवा जाळण्यामुळे NO<sub>2</sub> सोबत धूर आणि कण निघतात). तपासणीत प्राधान्य द्या आणि संवेदनशील व्यक्तींना घरात राहण्याचा सल्ला द्या.",
+            "haze_high_no2_low": "हवा धूसर आहे पण NO<sub>2</sub> वाढलेले नाही: धुके ताज्या ज्वलनापेक्षा धुके, आर्द्रता, समुद्री मीठ किंवा धूळ असण्याची शक्यता जास्त आहे. उत्सर्जन मानण्यापूर्वी दृश्यमानता आणि कण (PM) वाचन तपासा.",
+            "haze_low_no2_high": "हवा स्वच्छ दिसते पण NO<sub>2</sub> जास्त आहे: प्रदूषण मुख्यतः वाहतूक किंवा औद्योगिक चिमण्यांचा अदृश्य वायू आहे, जो केवळ कॅमेरा पकडू शकत नाही. पुष्टीसाठी जमिनीवरील किंवा ड्रोन NO<sub>2</sub> मोजमाप आवश्यक आहे.",
+            "haze_low_no2_low": "धुके आणि NO<sub>2</sub> दोन्ही कमी आहेत: कोणताही दृश्य किंवा वायुरूप प्रदूषण प्रसंग दिसत नाही.",
+        },
+        "h_plan": "तपासणीपूर्व ड्रोन उड्डाण योजना {n}: {place}",
+        "plan_intro": "अधिकारी येण्यापूर्वी ड्रोनने करायचे सर्वेक्षण उड्डाण: ते ठिकाणावर NO<sub>2</sub> मोजते आणि भू-टॅग केलेल्या कॅमेरा फ्रेम (धुके विश्लेषण) घेते, म्हणजे तपासणी पथकाला आधीच परिस्थिती कळते.",
+        "decision": {"go": "उड्डाण शक्य", "conditional": "अटींसह शक्य", "no_go": "या ग्राउंड स्टेशनवरून शक्य नाही"},
+        "issue": {"wind": "वारा ड्रोनच्या मर्यादेपेक्षा जास्त", "battery": "जाणे-येणे वापरण्यायोग्य बॅटरीपेक्षा जास्त",
+                  "airspace": "मार्ग विमानतळापासून 8 किमीच्या आत (DGCA पिवळा क्षेत्र: Digital Sky वरून ATC परवानगी आवश्यक)",
+                  "visibility": "धुके दृष्टिरेषा मर्यादित करते"},
+        "rows_route": ["ग्राउंड स्टेशन", "तपासणी ठिकाण", "अंतर (एकेरी) / जाणे-येणे", "जाण्याची / परतीची दिशा (बेअरिंग)",
+                       "वारा (कडून)", "समोरचा वारा जाताना / परतताना", "आडवा वारा / क्रॅब कोन", "जमिनीवरील वेग जाताना / परतताना"],
+        "rows_alt": ["उंची: ग्राउंड स्टेशन / ठिकाण", "उंचीतील वाढ", "मार्गावरील सर्वोच्च भूभाग", "उड्डाण उंची (AMSL / AGL)",
+                     "सर्वेक्षण उंची (AGL)", "हवाई क्षेत्र: जवळचे विमानतळ", "हवाई क्षेत्र झोन / मर्यादा"],
+        "zone": {"green": "हिरवा: 120 मी. पर्यंत परवानगीशिवाय", "yellow_8_12": "विमानतळापासून 8-12 किमी: 60 मी. पर्यंत",
+                 "yellow": "पिवळा क्षेत्र (<8 किमी): ATC परवानगी आवश्यक"},
+        "rows_batt": ["एकूण उड्डाण वेळ", "अंदाजित बॅटरी वापर", "बॅटरी क्षमता / वापरण्यायोग्य (20% राखीव)", "उतरताना उरलेली बॅटरी",
+                      "या वाऱ्यात कमाल त्रिज्या"],
+        "phase_head": ["टप्पा", "वेळ", "बॅटरी (mAh)"],
+        "wp_head": ["वेपॉइंट", "अक्षांश", "रेखांश", "उंची (AGL)", "कृती"],
+        "action": {"take_off": "उड्डाण", "climb": "चढाई", "arrive": "ठिकाणी पोहोचणे", "survey": "सर्वेक्षण (फेरी)",
+                   "depart": "ठिकाण सोडणे", "land": "उतरणे"},
+        "survey": "सर्वेक्षण: {alt:.0f} मी. AGL वर {r:.0f} मी. त्रिज्येच्या {laps} फेऱ्या; {sampling}.",
+        "relocation": "ठिकाण ग्राउंड स्टेशनच्या बॅटरी मर्यादेबाहेर आहे. पुढील प्रक्षेपण बिंदूपर्यंत ({lat:.4f}°N, {lon:.4f}°E, ठिकाणापासून {km:.1f} किमी) रस्त्याने जा आणि ही योजना उडवा:",
+        "h_checklist": "उड्डाणपूर्व तपासणी यादी",
+        "checklist": ["Digital Sky: ड्रोन UIN नोंदणीकृत, रिमोट पायलट प्रमाणपत्र वैध, वरील झोनसाठी उड्डाण परवानगी (NPNT)",
+                      "हवामान: वारा 10 मी./से. पेक्षा कमी, पाऊस नाही; ड्रोन दृष्टिरेषेत ठेवा (धुके वाचन पाहा)",
+                      "बॅटरी पूर्ण चार्ज आणि संतुलित; अतिरिक्त पॅक; ग्राउंड स्टेशनवर रिटर्न-टू-होम सेट करा",
+                      "NO<sub>2</sub> सेन्सर तापवलेला आणि शून्यावर; कॅमेरा लेन्स स्वच्छ; SD कार्ड आणि टेलिमेट्री लिंक तपासा",
+                      "ठिकाणाची माहिती: गर्दी किंवा संवेदनशील ठिकाणांवरून उडवू नका; गरज असल्यास स्थानिक पोलिसांना कळवा",
+                      "उतरल्यानंतर: NO<sub>2</sub> लॉग आणि कॅमेरा फ्रेम अपलोड करा; अधिकृत भेटीपूर्वी या अहवालाशी तुलना करा"],
+        "forward": "पुढील प्रक्षेपण बिंदूवरून", "min": "मिनिटे", "unit_note": "ऊर्जा मॉडेल: {mass} किग्रा क्वाड, {cap:.0f} mAh {v} V पॅक, होवर {hover:.0f} W; मूल्ये नियोजनासाठी अंदाज आहेत.",
+    },
+}
+
+
+def haze_combo_key(facts: dict) -> str | None:
+    """Which haze x NO2 interpretation applies (haze from the drone DCP reading, NO2 from the model)."""
+    hz = (facts.get("haze") or {}).get("latest")
+    if not hz:
+        return None
+    hazy = hz["class"] in ("moderate", "dense")
+    cur = facts["current"]
+    no2_high = cur["status"] in ("elevated", "critical", "critical_spike") or bool(facts.get("anomalies"))
+    return f"haze_{'high' if hazy else 'low'}_no2_{'high' if no2_high else 'low'}"
+
+
+def haze_texts(facts: dict, lang: str) -> list[str]:
+    D = DRONE_TXT[lang]
+    key = haze_combo_key(facts)
+    return [D["haze_none"]] if key is None else [D["combo"][key]]
+
+
+def flight_plan_lines(facts: dict, lang: str) -> list[str]:
+    """One line per plan for the web page: site, decision, distance, time, battery."""
+    D = DRONE_TXT[lang]
+    out = []
+    for fp in facts.get("flight_plans") or []:
+        use = fp["relocation"] or fp
+        where = "" if fp["relocation"] is None else f" ({D['forward']})"
+        out.append(f"{fp['target']['near']}: {D['decision'][use['decision']]} - {use['distance_km']:.1f} km, "
+                   f"{use['total_time_min']:.0f} {D['min']}, {use['total_mah']} mAh{where}")
+    return out
+
+
 def t(lang: str, key: str) -> str:
     return T[lang][key]
 
