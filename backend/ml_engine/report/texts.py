@@ -61,6 +61,12 @@ T = {
         "narrative_ai": "Narrative sections: AI summary (Gemini). All numbers are computed by the model, not by the AI.",
         "narrative_template": "Narrative sections: standard template. All numbers are computed by the model.",
         "lang_fallback": "Hindi and Marathi reports need a Devanagari font on the server; this report is in English.",
+        "h_column": "Satellite Measurement (Sentinel-5P tropospheric NO<sub>2</sub> column)",
+        "col_obs": "Observed column, clear pixels (area mean)",
+        "col_max": "Highest observed pixel",
+        "col_filled": "Area mean after cloud gap-filling",
+        "col_cloud": "Cloud-covered share of the area",
+        "col_note": "The satellite measures the NO<sub>2</sub> column above the ground in mol/m² (1 mol/m² = 10<super>6</super> µmol/m²). The model converts it to ground-level concentrations in µg/m³, the unit of the CPCB and WHO limits used in the rest of this report.",
         "h_notice": "Data notice",
         "notice_cached": "New satellite data for {requested} could not be processed ({reason}). This report uses the "
                          "model's most recent map for this area, for {used}.",
@@ -105,6 +111,12 @@ T = {
         "no_trend": "मौसम और उत्सर्जन के प्रभाव को अलग करने के लिए विश्लेषण अवधि में पर्याप्त दिन नहीं हैं।",
         "narrative_ai": "विवरण खंड: AI सारांश (Gemini)। सभी आँकड़े मॉडल द्वारा गणना किए गए हैं, AI द्वारा नहीं।",
         "narrative_template": "विवरण खंड: मानक टेम्पलेट। सभी आँकड़े मॉडल द्वारा गणना किए गए हैं।",
+        "h_column": "उपग्रह मापन (Sentinel-5P क्षोभमंडलीय NO<sub>2</sub> कॉलम)",
+        "col_obs": "मापा गया कॉलम, साफ़ पिक्सेल (क्षेत्र औसत)",
+        "col_max": "सर्वाधिक मापा गया पिक्सेल",
+        "col_filled": "बादल-अंतराल भरने के बाद क्षेत्र औसत",
+        "col_cloud": "बादलों से ढका क्षेत्र",
+        "col_note": "उपग्रह ज़मीन के ऊपर NO<sub>2</sub> कॉलम को mol/m² में मापता है (1 mol/m² = 10<super>6</super> µmol/m²)। मॉडल इसे ज़मीनी स्तर की सांद्रता µg/m³ में बदलता है, जो इस रिपोर्ट के बाकी हिस्से में प्रयुक्त CPCB और WHO सीमाओं की इकाई है।",
         "h_notice": "डेटा सूचना",
         "notice_cached": "{requested} का नया उपग्रह डेटा संसाधित नहीं हो सका ({reason})। यह रिपोर्ट इस क्षेत्र के लिए "
                          "मॉडल के सबसे हाल के मानचित्र ({used}) पर आधारित है।",
@@ -150,6 +162,12 @@ T = {
         "no_trend": "हवामान आणि उत्सर्जनाचा परिणाम वेगळा करण्यासाठी विश्लेषण कालावधीत पुरेसे दिवस नाहीत.",
         "narrative_ai": "वर्णनात्मक विभाग: AI सारांश (Gemini). सर्व आकडे मॉडेलने मोजले आहेत, AI ने नाहीत.",
         "narrative_template": "वर्णनात्मक विभाग: मानक साचा. सर्व आकडे मॉडेलने मोजले आहेत.",
+        "h_column": "उपग्रह मापन (Sentinel-5P तपांबरीय NO<sub>2</sub> स्तंभ)",
+        "col_obs": "मोजलेला स्तंभ, स्वच्छ पिक्सेल (क्षेत्र सरासरी)",
+        "col_max": "सर्वाधिक मोजलेला पिक्सेल",
+        "col_filled": "ढग-अंतर भरल्यानंतर क्षेत्र सरासरी",
+        "col_cloud": "ढगांनी झाकलेला क्षेत्राचा भाग",
+        "col_note": "उपग्रह जमिनीवरील NO<sub>2</sub> स्तंभ mol/m² मध्ये मोजतो (1 mol/m² = 10<super>6</super> µmol/m²). मॉडेल त्याचे जमिनी पातळीवरील µg/m³ संहतीत रूपांतर करते, जे या अहवालात वापरलेल्या CPCB आणि WHO मर्यादांचे एकक आहे.",
         "h_notice": "डेटा सूचना",
         "notice_cached": "{requested} चा नवीन उपग्रह डेटा प्रक्रिया करता आला नाही ({reason}). हा अहवाल या क्षेत्रासाठी "
                          "मॉडेलच्या सर्वात अलीकडील नकाशावर ({used}) आधारित आहे.",
@@ -389,6 +407,85 @@ METHOD = {
           "24-तास 80 {ug}, वार्षिक 40 {ug}; WHO 2021 24-तास मार्गदर्शक 25 {ug}. लोकसंख्या: GHSL. अंदाज: त्या दिवसाच्या ERA5 "
           "वाऱ्यासह ॲडव्हेक्शन–डिफ्यूजन मॉडेल.",
 }
+
+
+ANOMALY = {
+    "en": {
+        "h": "Unusual Activity and Likely Causes",
+        "intro": "Places that break the CPCB limit or rise far above their own recent levels on this day, checked against the wind: NO<sub>2</sub> that is much higher than the air arriving from upwind is being produced locally.",
+        "none": "No unusual activity: no place exceeds the 80 {ug} limit or rises far above its own levels of the previous days.",
+        "col_place": "Location", "col_value": "Today ({ug})", "col_base": "Usual (7 days)", "col_up": "Upwind air",
+        "col_flag": "Flags",
+        "exceedance": "Above CPCB limit", "spike": "Unusual spike", "local_source": "Local source (against the flow)",
+        "line": "{place}: {value} {ug}{what}. Likely cause: {reasons}.",
+        "what_exceed": ", above the CPCB 24-hour limit of 80 {ug}",
+        "what_spike": ", against {base} {ug} on its previous days (+{pct}%)",
+        "what_local": ", and far above the air arriving from upwind ({up} {ug}), so the extra NO<sub>2</sub> is produced here rather than blown in",
+        "traffic": "heavy road traffic",
+        "power_plant": "a power plant or industrial combustion",
+        "dense_urban": "dense commercial and residential activity",
+        "unlisted": "no mapped road, plant or dense-activity source here - possibly an unlisted source such as open burning, construction, diesel generators or industrial activity (worth an on-site check)",
+        "stagnant": "stagnant wind trapping emissions",
+        "low_mixing": "a shallow mixing layer keeping NO<sub>2</sub> near the ground",
+        "and": " and ",
+    },
+    "hi": {
+        "h": "असामान्य गतिविधि और संभावित कारण",
+        "intro": "वे स्थान जो इस दिन CPCB सीमा को पार करते हैं या अपने हाल के स्तर से बहुत ऊपर उठते हैं, हवा की दिशा के साथ जाँचे गए: जो NO<sub>2</sub> ऊपरी हवा (upwind) से आने वाली हवा से बहुत अधिक है, वह स्थानीय रूप से बन रहा है।",
+        "none": "कोई असामान्य गतिविधि नहीं: कोई भी स्थान 80 {ug} सीमा को पार नहीं करता और न ही अपने पिछले दिनों के स्तर से बहुत ऊपर उठता है।",
+        "col_place": "स्थान", "col_value": "आज ({ug})", "col_base": "सामान्य (7 दिन)", "col_up": "ऊपरी हवा",
+        "col_flag": "संकेत",
+        "exceedance": "CPCB सीमा से ऊपर", "spike": "असामान्य उछाल", "local_source": "स्थानीय स्रोत (हवा के विपरीत)",
+        "line": "{place}: {value} {ug}{what}। संभावित कारण: {reasons}।",
+        "what_exceed": ", जो 80 {ug} की CPCB 24-घंटे सीमा से अधिक है",
+        "what_spike": ", जबकि पिछले दिनों में यह {base} {ug} था (+{pct}%)",
+        "what_local": ", और ऊपरी हवा से आने वाली हवा ({up} {ug}) से बहुत अधिक, इसलिए अतिरिक्त NO<sub>2</sub> यहीं बन रहा है, बाहर से नहीं आ रहा",
+        "traffic": "भारी सड़क यातायात",
+        "power_plant": "बिजली संयंत्र या औद्योगिक दहन",
+        "dense_urban": "घनी व्यावसायिक और आवासीय गतिविधि",
+        "unlisted": "यहाँ कोई मानचित्रित सड़क, संयंत्र या घनी गतिविधि का स्रोत नहीं है - संभवतः कोई असूचीबद्ध स्रोत जैसे खुले में जलाना, निर्माण कार्य, डीज़ल जनरेटर या औद्योगिक गतिविधि (स्थल पर जाँच योग्य)",
+        "stagnant": "स्थिर हवा जो उत्सर्जन को रोके रखती है",
+        "low_mixing": "उथली मिश्रण परत जो NO<sub>2</sub> को ज़मीन के पास रोके रखती है",
+        "and": " और ",
+    },
+    "mr": {
+        "h": "असामान्य हालचाली आणि संभाव्य कारणे",
+        "intro": "या दिवशी CPCB मर्यादा ओलांडणारी किंवा स्वतःच्या अलीकडील पातळीपेक्षा खूप वाढलेली ठिकाणे, वाऱ्याच्या दिशेसह तपासलेली: वाऱ्याच्या वरच्या बाजूने (upwind) येणाऱ्या हवेपेक्षा खूप जास्त असलेले NO<sub>2</sub> स्थानिकरित्या निर्माण होत आहे.",
+        "none": "कोणतीही असामान्य हालचाल नाही: कोणतेही ठिकाण 80 {ug} मर्यादा ओलांडत नाही किंवा मागील दिवसांच्या पातळीपेक्षा खूप वाढत नाही.",
+        "col_place": "ठिकाण", "col_value": "आज ({ug})", "col_base": "नेहमीचे (7 दिवस)", "col_up": "वरची हवा",
+        "col_flag": "संकेत",
+        "exceedance": "CPCB मर्यादेपेक्षा जास्त", "spike": "असामान्य वाढ", "local_source": "स्थानिक स्रोत (वाऱ्याच्या विरुद्ध)",
+        "line": "{place}: {value} {ug}{what}. संभाव्य कारण: {reasons}.",
+        "what_exceed": ", जे 80 {ug} या CPCB 24-तास मर्यादेपेक्षा जास्त आहे",
+        "what_spike": ", मागील दिवसांतील {base} {ug} च्या तुलनेत (+{pct}%)",
+        "what_local": ", आणि वरच्या बाजूने येणाऱ्या हवेपेक्षा ({up} {ug}) खूप जास्त, म्हणजे अतिरिक्त NO<sub>2</sub> इथेच निर्माण होत आहे, बाहेरून येत नाही",
+        "traffic": "जड रस्ते वाहतूक",
+        "power_plant": "वीज प्रकल्प किंवा औद्योगिक ज्वलन",
+        "dense_urban": "दाट व्यावसायिक आणि निवासी हालचाल",
+        "unlisted": "येथे नकाशावर कोणताही रस्ता, प्रकल्प किंवा दाट हालचालीचा स्रोत नाही - कदाचित न नोंदवलेला स्रोत जसे उघड्यावर जाळणे, बांधकाम, डिझेल जनरेटर किंवा औद्योगिक हालचाल (जागेवर तपासणी करण्याजोगे)",
+        "stagnant": "उत्सर्जन अडकवून ठेवणारा स्थिर वारा",
+        "low_mixing": "NO<sub>2</sub> जमिनीजवळ ठेवणारा उथळ मिश्रण स्तर",
+        "and": " आणि ",
+    },
+}
+
+
+def anomaly_lines(facts: dict, lang: str) -> list[str]:
+    """One sentence per flagged place: what is unusual and the likely cause."""
+    A = ANOMALY[lang]
+    lines = []
+    for a in facts.get("anomalies") or []:
+        what = ""
+        if "exceedance" in a["kinds"]:
+            what += A["what_exceed"].format(ug=UG)
+        if "spike" in a["kinds"] and a.get("baseline"):
+            what += A["what_spike"].format(base=f"{a['baseline']:.0f}", ug=UG,
+                                           pct=f"{(a['value'] - a['baseline']) / a['baseline'] * 100:.0f}")
+        if "local_source" in a["kinds"] and a.get("upwind") is not None:
+            what += A["what_local"].format(up=f"{a['upwind']:.0f}", ug=UG)
+        reasons = A["and"].join(A[r] for r in a["reasons"]) or A["dense_urban"]
+        lines.append(A["line"].format(place=a["near"], value=f"{a['value']:.0f}", ug=UG, what=what, reasons=reasons))
+    return lines
 
 
 def t(lang: str, key: str) -> str:

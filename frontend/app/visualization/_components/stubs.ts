@@ -2,7 +2,7 @@ export const DEFAULT_BBOX: [number, number, number, number] = [
   72.7, 18.8, 73.2, 19.3,
 ]; // Mumbai region: [minX, minY, maxX, maxY]
 
-export const USE_STUB_DATA = true;
+export const USE_STUB_DATA = false;
 
 export interface SyntheticFrameData {
   no2: Float32Array;
@@ -78,10 +78,31 @@ export function generateSyntheticFrame(
 }
 
 /**
+ * 61 dates corresponding to all daily satellite GeoTIFF files in backend/data/test_data
+ * (1 Nov 2025 to 31 Dec 2025).
+ */
+export const DEFAULT_AVAILABLE_DATES: string[] = [
+  '2025-11-01', '2025-11-02', '2025-11-03', '2025-11-04', '2025-11-05',
+  '2025-11-06', '2025-11-07', '2025-11-08', '2025-11-09', '2025-11-10',
+  '2025-11-11', '2025-11-12', '2025-11-13', '2025-11-14', '2025-11-15',
+  '2025-11-16', '2025-11-17', '2025-11-18', '2025-11-19', '2025-11-20',
+  '2025-11-21', '2025-11-22', '2025-11-23', '2025-11-24', '2025-11-25',
+  '2025-11-26', '2025-11-27', '2025-11-28', '2025-11-29', '2025-11-30',
+  '2025-12-01', '2025-12-02', '2025-12-03', '2025-12-04', '2025-12-05',
+  '2025-12-06', '2025-12-07', '2025-12-08', '2025-12-09', '2025-12-10',
+  '2025-12-11', '2025-12-12', '2025-12-13', '2025-12-14', '2025-12-15',
+  '2025-12-16', '2025-12-17', '2025-12-18', '2025-12-19', '2025-12-20',
+  '2025-12-21', '2025-12-22', '2025-12-23', '2025-12-24', '2025-12-25',
+  '2025-12-26', '2025-12-27', '2025-12-28', '2025-12-29', '2025-12-30',
+  '2025-12-31',
+];
+
+/**
  * Generate synthetic 30-minute ISO timestamps starting from a reference date.
  */
-export function generateSyntheticTimestamps(count: number = 48): string[] {
-  const baseTime = new Date('2024-01-01T00:00:00Z').getTime();
+export function generateSyntheticTimestamps(count: number = 48, baseDate: string = '2025-11-05'): string[] {
+  const parsed = new Date(`${baseDate}T00:00:00Z`).getTime();
+  const baseTime = isNaN(parsed) ? new Date('2025-11-05T00:00:00Z').getTime() : parsed;
   const stepMs = 30 * 60 * 1000; // 30 minutes
   const timestamps: string[] = [];
 

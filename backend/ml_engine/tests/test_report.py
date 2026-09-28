@@ -279,3 +279,26 @@ def test_offline_mode_uses_only_cached_narratives(facts, isolated_llm, monkeypat
     monkeypatch.setenv("ML_ENGINE_OFFLINE", "true")
     monkeypatch.setattr(llm.httpx, "post", lambda *a, **k: pytest.fail("offline mode must not call Gemini"))
     assert llm.generate_narrative(facts, "en") is None
+
+
+def test_anomalies_flag_a_new_local_spike(runs_root, facts):
+    """A new hot spot that is far above its own past days and above the upwind air is flagged with reasons."""
+    import xarray as xr
+
+    from ml_engine.grid import GridSpec
+    from ml_engine.report.analysis import _anomalies
+
+    run_dir = next(runs_root.glob("*/report.json")).parent
+    report = json.loads((run_dir / "report.json").read_text())
+    grid = GridSpec(**report["grids"]["fine"])
+    surface = xr.load_dataset(run_dir / "no2_surface_fine.nc", engine="h5netcdf")["no2_surface"].copy()
+    coarse = xr.load_dataset(run_dir / "coarse_raw.nc", engine="h5netcdf")
+    t = surface.sizes["time"] - 1
+    r, c = surface.sizes["y"] // 2, surface.sizes["x"] // 2
+    surface[t, r - 3:r + 4, c - 3:c + 4] = float(surface[t].max()) + 120.0  # a new source today
+    found = _anomalies(surface, t, grid, None, coarse, None)
+    top = found[0]
+    assert "exceedance" in top["kinds"] and "spike" in top["kinds"] and top["severity"] == "high"
+    assert top["value"] > top["baseline"] and "unlisted" in top["reasons"]
+    lines = texts.anomaly_lines({"anomalies": found}, "hi")
+    assert len(lines) == len(found) and all(lines)

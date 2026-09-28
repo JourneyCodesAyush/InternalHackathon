@@ -90,3 +90,33 @@ async def get_spatial_forecast(
     return await trends_service.get_spatial_forecast(
         supabase, user_id, bbox_tuple, timestamp, interval
     )
+
+
+@router.get(
+    "/point",
+    summary="NO₂ at a point from the uploaded data for a date, with the forecast model's predictions",
+    tags=["trends"],
+)
+async def get_point(
+    lat: float,
+    lon: float,
+    date: str | None = None,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    For the home page's pinpoint card: the value at the point in that day's uploaded GeoTIFF (the same data
+    the map heatmap and Plume Flow show) and the forecasting model's +3/+6/+12/+24 h predictions from it.
+
+    - **date**: YYYY-MM-DD from `GET /downscale/dates` (default: the first uploaded day)
+    """
+    import asyncio
+
+    from app.services import upload_data
+
+    dates = upload_data.available_dates()
+    if not dates:
+        raise HTTPException(status_code=404, detail="No uploaded data")
+    try:
+        return await asyncio.to_thread(upload_data.point_forecast, lat, lon, date or dates[0])
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))

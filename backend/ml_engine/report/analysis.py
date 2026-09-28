@@ -38,7 +38,7 @@ HOTSPOT_SMOOTH_PX = 2.0
 HOTSPOT_SEPARATION_PX = 10  # ~2.6 km between reported hotspots
 NEAR_STATION_KM = 6.0
 MIN_TREND_DAYS = 10
-FACTS_VERSION = 1  # bump when the facts change, to recompute cached analyses
+FACTS_VERSION = 6  # bump when the facts change, to recompute cached analyses (2: satellite column, 3-4: anomalies)
 
 
 def classify_status(area_mean: float, share_above_standard: float) -> str:
@@ -69,6 +69,23 @@ def _band_codes(values: np.ndarray) -> np.ndarray:
     for band in HAZARD_BANDS:
         codes[(values >= band["min"]) & (values < band["max"])] = band["code"]
     return codes
+
+
+def _column(run_dir: Path, raw: np.ndarray | None, t: int) -> dict | None:
+    """The Sentinel-5P tropospheric NO2 column on the report day, in µmol/m² (the run's unit; ×1e-6 = mol/m²):
+    mean and highest of the clear (observed) pixels, and the area mean after cloud gap-filling."""
+    if raw is None:
+        return None
+    raw = raw.astype(np.float64)
+    observed = np.isfinite(raw)
+    out = {"observed_mean": round(float(np.nanmean(raw)), 2) if observed.any() else None,
+           "observed_max": round(float(np.nanmax(raw)), 2) if observed.any() else None,
+           "cloud_share": float(1 - observed.mean()), "filled_mean": None, "units": "umol m-2"}
+    path = run_dir / "coarse_gapfilled.nc"
+    if path.exists():
+        filled = xr.load_dataset(path, engine="h5netcdf")["no2"].isel(time=t).values.astype(np.float64)
+        out["filled_mean"] = round(float(np.nanmean(filled)), 2)
+    return out
 
 
 def _load_run(run_dir: Path):
@@ -258,6 +275,125 @@ def weather_adjusted_trend(dates: pd.DatetimeIndex, observed: np.ndarray, weathe
     }
 
 
+UPWIND_KM = 5.0  # compare each place with the air arriving from this far upwind
+BASELINE_DAYS = 7  # a place's own recent history for spike detection
+MAX_ANOMALIES = 5
+
+
+def _anomalies(surface_all: xr.DataArray, t: int, grid: GridSpec, static: xr.Dataset | None, coarse: xr.Dataset,
+               stations) -> list[dict]:
+    """Places that break the guidelines or behave unusually on the report day, with likely reasons.
+
+    * ``exceedance``: above the CPCB 24-h limit (80 µg/m³).
+    * ``spike``: far above the place's own median of the previous ``BASELINE_DAYS`` days.
+    * ``local_source`` (qualifier of the two above): also far above the air arriving from ``UPWIND_KM`` upwind -
+      against the flow, so the extra NO2 is produced here rather than transported.
+    Reasons come from the model's inputs at the place (roads, power plants, dense activity) and the day's
+    weather (stagnant wind, shallow mixing layer); none nearby -> possible unlisted source.
+    """
+    surface = surface_all.isel(time=t).values.astype(np.float64)
+    valid = np.isfinite(surface)
+    if not valid.any():
+        return []
+    filled = np.where(valid, surface, np.nanmean(surface))
+    smooth = ndimage.gaussian_filter(filled, 1.0)
+    p75, p90 = np.nanpercentile(surface, 75), np.nanpercentile(surface, 90)
+    # open water (negative NDVI): not a place of activity, and clean sea air is no fair upwind comparison
+    water = (np.nan_to_num(static["ndvi"].values, nan=1.0) < 0.0) if static is not None and "ndvi" in static         else np.zeros(surface.shape, bool)
+    valid = valid & ~water
+
+    # 1. guideline exceedance
+    exceed = valid & (smooth > NAAQS_24H)
+
+    # 2. spike against the place's own recent days
+    spike = np.zeros_like(valid)
+    baseline = None
+    if t >= 3:
+        past = surface_all.isel(time=slice(max(0, t - BASELINE_DAYS), t)).values.astype(np.float64)
+        baseline = ndimage.gaussian_filter(np.nan_to_num(np.nanmedian(past, axis=0), nan=float(np.nanmean(past))), 1.0)
+        spike = valid & (smooth - baseline > np.maximum(15.0, 0.5 * baseline)) & (smooth > p75)
+
+    # 3. against the flow: much higher than the upwind air
+    day = coarse.isel(time=t)
+    u = float(np.nanmean(day["u10"].values)) if "u10" in day else 0.0
+    v = float(np.nanmean(day["v10"].values)) if "v10" in day else 0.0
+    speed = math.hypot(u, v)
+    local = np.zeros_like(valid)
+    upwind = None
+    if speed > 1.0:
+        dx_m, dy_m = grid.pixel_size_m()
+        cells_x = UPWIND_KM * 1000 / dx_m * (u / speed)
+        cells_y = UPWIND_KM * 1000 / dy_m * (v / speed)
+        # value that arrives here = the field shifted downwind by the upwind distance (rows run southwards)
+        upwind = ndimage.shift(smooth, (-cells_y, cells_x), order=1, mode="nearest")
+        upwind_water = ndimage.shift(water.astype(float), (-cells_y, cells_x), order=1, mode="nearest") > 0.3
+        local = valid & ~upwind_water & (smooth - upwind > np.maximum(15.0, 0.5 * upwind)) & (smooth > p90)
+
+    # a built-up place is always above the greener land upwind of it (that is how the map is shaped), so
+    # "against the flow" only qualifies places that also break the limit or are unusual for themselves
+    flagged = exceed | spike
+    if not flagged.any():
+        return []
+
+    # weather context of the day vs the period
+    blh_low = False
+    if "blh" in coarse:
+        blh_series = coarse["blh"].mean(dim=("y", "x")).values.astype(np.float64)
+        blh_low = bool(np.isfinite(blh_series[t]) and blh_series[t] < 0.8 * np.nanmedian(blh_series))
+    stagnant = speed < 1.5
+
+    layers, pct = {}, {}
+    if static is not None:
+        for name in ("road_density", "night_lights", "ghsl_built", "power_plants"):
+            if name in static:
+                arr = ndimage.gaussian_filter(np.nan_to_num(static[name].values.astype(np.float64), nan=0.0), 2.0)
+                layers[name], pct[name] = arr, (np.percentile(arr, 80), np.percentile(arr, 90))
+
+    labels, n = ndimage.label(flagged)
+    found = []
+    for k in range(1, n + 1):
+        blob = labels == k
+        cells = int(blob.sum())
+        if cells < 2:
+            continue
+        r, c = np.unravel_index(int(np.argmax(np.where(blob, smooth, -np.inf))), smooth.shape)
+        # flags describe the cluster's peak (the numbers shown for it)
+        kinds = [name for name, mask in (("exceedance", exceed), ("spike", spike), ("local_source", local)) if mask[r, c]]
+        if not any(k in kinds for k in ("exceedance", "spike")):
+            kinds = [name for name, mask in (("exceedance", exceed), ("spike", spike)) if (mask & blob).any()] +                     (["local_source"] if local[r, c] else [])
+        reasons = []
+        if "road_density" in layers and layers["road_density"][r, c] >= pct["road_density"][0]:
+            reasons.append("traffic")
+        if "power_plants" in layers and layers["power_plants"][r, c] >= max(pct["power_plants"][1], math.log1p(50.0)):
+            reasons.append("power_plant")
+        if ("night_lights" in layers and "ghsl_built" in layers and layers["night_lights"][r, c] >= pct["night_lights"][0]
+                and layers["ghsl_built"][r, c] >= pct["ghsl_built"][0]):
+            reasons.append("dense_urban")
+        if not reasons:
+            reasons.append("unlisted")
+        if stagnant:
+            reasons.append("stagnant")
+        if blh_low:
+            reasons.append("low_mixing")
+        lat, lon = float(grid.y[r]), float(grid.x[c])
+        dx_m, dy_m = grid.pixel_size_m()
+        found.append({
+            "kinds": kinds, "reasons": reasons, "lat": round(lat, 4), "lon": round(lon, 4),
+            "near": _place_name(lat, lon, stations), "value": round(float(smooth[r, c]), 1),
+            "baseline": round(float(baseline[r, c]), 1) if baseline is not None else None,
+            "upwind": round(float(upwind[r, c]), 1) if upwind is not None else None,
+            "area_km2": round(cells * dx_m * dy_m / 1e6, 1),
+            "severity": "high" if "exceedance" in kinds or len(kinds) > 1 else "medium",
+            "score": float(smooth[r, c] - min(filter(None, [baseline[r, c] if baseline is not None else None,
+                                                             upwind[r, c] if upwind is not None else None,
+                                                             NAAQS_24H]))),
+        })
+    found.sort(key=lambda a: (a["severity"] != "high", -a["score"]))
+    for a in found:
+        a.pop("score")
+    return found[:MAX_ANOMALIES]
+
+
 def _pretrained_accuracy() -> dict:
     path = PRETRAINED_SURFACE_MODEL.with_name(PRETRAINED_SURFACE_MODEL.stem + "_report.json")
     try:
@@ -340,6 +476,8 @@ def _compute_facts(run_dir: Path, date: str, area_name: str = "") -> dict:
     trend = _section("trend", lambda: weather_adjusted_trend(dates, daily_mean, weather, t), None)
 
     raw_no2 = coarse["no2"].isel(time=t).values if "no2" in coarse else None
+    column = _section("column", lambda: _column(run_dir, raw_no2, t), None)
+    anomalies = _section("anomalies", lambda: _anomalies(surface_all, t, grid, static, coarse, stations), [])
     return {
         "area": {"name": area_name, "bbox": [round(v, 3) for v in grid.bbox],
                  "centre": [round((grid.south + grid.north) / 2, 3), round((grid.west + grid.east) / 2, 3)]},
@@ -371,6 +509,8 @@ def _compute_facts(run_dir: Path, date: str, area_name: str = "") -> dict:
             "downscale_r2": round(float(report["downscaler"]["temporal_holdout_coarse"]["r2"]), 2),
             **_pretrained_accuracy(),
         },
+        "column": column,
+        "anomalies": anomalies,
         "data": {
             "s5p_product": report["config"].get("s5p_product", "OFFL"),
             "cloudy_share_day": float(np.isnan(raw_no2).mean()) if raw_no2 is not None else None,

@@ -45,10 +45,18 @@ async def get_current_user(request: Request, token: str | None = Depends(oauth2_
             return DEMO_USER
         raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Bearer"})
 
-    payload = decode_supabase_jwt(token)
-    user_id: str = payload.get("sub", "")
+    client_host = request.client.host if request.client else ""
+    try:
+        payload = decode_supabase_jwt(token)
+        user_id: str = payload.get("sub", "")
+    except Exception:
+        if settings.LOCAL_DEMO_MODE and client_host in LOCAL_HOSTS:
+            return DEMO_USER
+        raise HTTPException(status_code=401, detail="Invalid token")
 
     if not user_id:
+        if settings.LOCAL_DEMO_MODE and client_host in LOCAL_HOSTS:
+            return DEMO_USER
         raise HTTPException(status_code=401, detail="Invalid token: missing subject")
 
     supabase = get_supabase()

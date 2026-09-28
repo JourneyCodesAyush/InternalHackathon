@@ -16,18 +16,26 @@ import {
 } from 'lucide-react';
 import { PinpointAttributionResult } from '@/lib/types';
 import StatusBadge from './StatusBadge';
+import DatePicker from '../visualization/_components/DatePicker';
 import { REGULATORY_SCALES } from '@/lib/constants';
 
 interface TrendPanelProps {
   data: PinpointAttributionResult | null;
   onClose: () => void;
   onTimeSliderChange?: (timeOffset: number) => void;
+  /** Uploaded days (from /downscale/dates) and the one shown on the map. */
+  dates?: string[];
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
 }
 
 export default function TrendPanel({
   data,
   onClose,
   onTimeSliderChange,
+  dates,
+  selectedDate,
+  onDateChange,
 }: TrendPanelProps) {
   const [selectedHorizon, setSelectedHorizon] = useState<number>(0);
 
@@ -108,6 +116,11 @@ export default function TrendPanel({
           <h2 className="font-semibold text-sm text-zinc-100 mt-1 truncate max-w-[270px]">
             {data.locationName}
           </h2>
+          {dates && dates.length > 0 && onDateChange && (
+            <div className="mt-1.5">
+              <DatePicker availableDates={dates} selectedDate={selectedDate ?? ''} onDateChange={onDateChange} />
+            </div>
+          )}
         </div>
 
         <button

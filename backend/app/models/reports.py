@@ -11,3 +11,5 @@ class ReportRequest(BaseModel):
     language: Literal["en", "hi", "mr"] = "en"
     use_ai: bool = True  # Gemini narrative when a key is configured; the template is used otherwise
     city: Optional[str] = None  # a known city name overrides bbox (shared, cached city areas)
+    # "upload": report on end_date of the uploaded daily data (backend/data/test_data), the data the map shows
+    data_source: Optional[Literal["upload"]] = None

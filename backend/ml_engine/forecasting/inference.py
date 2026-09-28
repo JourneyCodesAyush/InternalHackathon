@@ -188,7 +188,30 @@ def run_inference(
     dy_m = float(np.mean(np.abs(np.diff(y)))) * 110_574.0
 
     solver = ImprovedPhysicsSolver(H, W, abs(dx_m), abs(dy_m), cfg.physics)
-    physics_ds = solver.forecast(c0, wind_sequence, y, x, preserve_mass=preserve_mass)
+
+    dem_arr = None
+    slope_arr = None
+    emiss_dict = None
+    if static_feat is not None and static_feat.shape[0] >= 2:
+        dem_arr = static_feat[0]
+        slope_arr = static_feat[1]
+        if static_feat.shape[0] >= 7:
+            emiss_dict = {
+                "power_plants": static_feat[6],
+                "industrial": static_feat[3] if static_feat.shape[0] > 3 else np.zeros((H, W)),
+                "traffic": static_feat[2] if static_feat.shape[0] > 2 else np.zeros((H, W)),
+            }
+
+    physics_ds = solver.forecast(
+        c0,
+        wind_sequence,
+        y,
+        x,
+        dem=dem_arr,
+        slope=slope_arr,
+        emission_sources=emiss_dict,
+        preserve_mass=preserve_mass,
+    )
 
     physics_frames = physics_ds["no2_forecast"].values   # (horizons, H, W)
     mass_errors    = physics_ds["mass_error"].values.tolist()

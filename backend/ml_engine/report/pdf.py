@@ -248,6 +248,28 @@ def build_unavailable_pdf(area_name: str, date: str, lang: str, notice: dict) ->
     return buf.getvalue()
 
 
+def _anomaly_section(facts: dict, lang: str, st: dict, page_w: float) -> list:
+    """Places breaking the limit or rising far above their usual level, with the wind check and likely causes."""
+    A = tx.ANOMALY[lang]
+    anomalies = facts.get("anomalies") or []
+    if not anomalies:
+        return [Paragraph(A["h"], st["h2"]), Paragraph(A["none"].format(ug=tx.UG), st["body"])]
+    rows = [[A["col_place"], A["col_value"].format(ug=tx.UG), A["col_base"], A["col_up"], A["col_flag"]]]
+    for a in anomalies:
+        coords = f"{a['lat']:.3f}°N, {a['lon']:.3f}°E"
+        place = escape(a["near"]) if a["near"] == coords else f"{escape(a['near'])}<br/><font size='7.5' color='#5b6675'>{coords}</font>"
+        rows.append([place, f"<b>{a['value']:.0f}</b>",
+                     "—" if a.get("baseline") is None else f"{a['baseline']:.0f}",
+                     "—" if a.get("upwind") is None else f"{a['upwind']:.0f}",
+                     "<br/>".join(A[k] for k in a["kinds"])])
+    table = _table(rows, st, [page_w * 0.3, page_w * 0.14, page_w * 0.15, page_w * 0.13, page_w * 0.28])
+    table.setStyle(TableStyle([("LINEBEFORE", (0, i), (0, i), 3, colors.HexColor("#c62828" if a["severity"] == "high" else "#ef6c00"))
+                               for i, a in enumerate(anomalies, start=1)]))
+    items = [ListItem(Paragraph(line, st["body"]), leftIndent=12) for line in tx.anomaly_lines(facts, lang)]
+    return [KeepTogether([Paragraph(A["h"], st["h2"]), Paragraph(A["intro"], st["small"]), Spacer(1, 4), table]),
+            Spacer(1, 4), ListFlowable(items, bulletType="bullet", start="•", leftIndent=12)]
+
+
 def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback: bool = False) -> bytes:
     regular, bold, deva = resolve_fonts()
     st = _styles(regular, bold, shaping=deva)
@@ -324,6 +346,22 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
                                   for i in (1, 2, 3, 4)]))
     story += [Spacer(1, 6), band_tbl]
 
+    col = facts.get("column")
+    if col:
+        def both(v):  # µmol/m² and mol/m² (satellite unit) side by side
+            if v is None:
+                return "—", "—"
+            mant, exp = f"{v * 1e-6:.2e}".split("e")
+            return f"{v:.1f}", f"{mant} × 10<super>{int(exp)}</super>"
+        rows = [[L["metric"], "µmol/m²", "mol/m²"]]
+        for key, value in (("col_obs", col["observed_mean"]), ("col_max", col["observed_max"]),
+                           ("col_filled", col["filled_mean"])):
+            rows.append([L[key], *both(value)])
+        rows.append([L["col_cloud"], f"{col['cloud_share'] * 100:.0f}%", "—"])
+        story += [KeepTogether([Paragraph(L["h_column"], st["h2"]),
+                                _table(rows, st, [page_w * 0.52, page_w * 0.2, page_w * 0.28]),
+                                Spacer(1, 3), Paragraph(L["col_note"], st["small"])])]
+
     try:
         grid = facts["grid"]
         img_buf = map_image(facts["surface_map"], facts["hotspots"], grid, water=facts.get("water_mask"))
@@ -342,6 +380,8 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
     except Exception:  # noqa: BLE001 - the rest of the report is still useful without the figure
         log.exception("Map figure failed")
         story += [Paragraph(L["h_map"], st["h2"]), Paragraph(L["no_map"], st["body"])]
+
+    story += _anomaly_section(facts, lang, st, page_w)
 
     story += [Paragraph(L["h_exposure"], st["h2"])]
     story += [Paragraph(tx.population_text(facts, lang), st["body"])] if pop else [Paragraph(L["no_population"], st["body"])]

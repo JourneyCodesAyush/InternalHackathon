@@ -18,6 +18,9 @@ import {
   Activity,
 } from 'lucide-react';
 
+import DatePicker from '../visualization/_components/DatePicker';
+import { supabase } from '@/lib/supabase';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const LANGUAGES = [
@@ -68,8 +71,16 @@ interface Analysis {
   hotspots: { rank: number; near: string; value: number; band: string }[];
   population: { total: number; above_naaqs: number; share_above_naaqs: number; weighted_mean: number } | null;
   trend: { dates: string[]; observed: number[]; adjusted: number[]; direction: string } | null;
-  labels: { status: string; hotspot_sources: string[][] };
-  texts: { summary: string; forecast: string[]; trend: string[]; recommendations: string[]; notice: string | null };
+  labels: { status: string; hotspot_sources: string[][]; anomaly_kinds?: string[][]; anomaly_title?: string };
+  texts: {
+    summary: string;
+    forecast: string[];
+    trend: string[];
+    recommendations: string[];
+    notice: string | null;
+    /** Unusual activity: places breaking the limit or rising far above their usual level, with likely causes. */
+    anomalies?: string[];
+  };
 }
 
 function isoDate(d: Date): string {
@@ -108,7 +119,7 @@ function StandardBar({ label, value }: { label: string; value: number }) {
   const diff = ((value - NAAQS_24H) / NAAQS_24H) * 100;
   return (
     <div className="space-y-0.5">
-      <div className="flex justify-between text-[10px]">
+      <div className="flex justify-between text-[13px]">
         <span className="text-zinc-400">{label}</span>
         <span className="text-zinc-200 font-mono">
           {value.toFixed(0)} µg/m³{' '}
@@ -152,38 +163,63 @@ function AnalysisPanel({ a }: { a: Analysis }) {
   return (
     <div className="space-y-3 pt-1">
       {a.texts.notice && (
-        <div className="flex items-start gap-1.5 p-2 rounded border border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-200 leading-relaxed">
+        <div className="flex items-start gap-1.5 p-2 rounded border border-amber-500/40 bg-amber-500/10 text-[13px] text-amber-200 leading-relaxed">
           <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           <span>{a.texts.notice}</span>
         </div>
       )}
 
       <div className="flex items-center justify-between">
-        <span className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold ${status?.className ?? ''}`}>
+        <span className={`px-1.5 py-0.5 rounded border text-[13px] font-semibold ${status?.className ?? ''}`}>
           {a.labels.status}
         </span>
-        <span className="text-[10px] text-zinc-500">{a.date}</span>
+        <span className="text-[13px] text-zinc-500">{a.date}</span>
       </div>
 
       <div>
-        <div className="text-2xl font-bold text-zinc-100 font-mono">
-          {cur.mean.toFixed(0)} <span className="text-xs font-normal text-zinc-400">µg/m³ area average</span>
+        <div className="text-3xl font-bold text-zinc-100 font-mono">
+          {cur.mean.toFixed(0)} <span className="text-sm font-normal text-zinc-400">µg/m³ area average</span>
         </div>
-        <div className={`text-[11px] ${cur.pct_vs_naaqs > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
+        <div className={`text-[14px] ${cur.pct_vs_naaqs > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
           {Math.abs(cur.pct_vs_naaqs).toFixed(0)}% {cur.pct_vs_naaqs > 0 ? 'above' : 'below'} the CPCB 24-h standard (80)
         </div>
       </div>
 
       <div className="space-y-1.5">
-        <div className="text-[10px] uppercase tracking-wide text-zinc-500">Comparison with standards</div>
+        <div className="flex items-center gap-1.5 text-[13px] uppercase tracking-wide text-zinc-500">
+          <AlertTriangle className={`w-3 h-3 ${a.texts.anomalies?.length ? 'text-rose-400' : 'text-emerald-400'}`} />
+          {a.labels.anomaly_title ?? 'Unusual activity and likely causes'}
+        </div>
+        {a.texts.anomalies?.length ? (
+          a.texts.anomalies.map((line, i) => (
+            <div key={line} className="p-2 rounded border border-rose-500/40 bg-rose-500/10 text-[13px] leading-relaxed">
+              <div className="flex flex-wrap gap-1 mb-1">
+                {(a.labels.anomaly_kinds?.[i] ?? []).map((k) => (
+                  <span key={k} className="px-1 py-0.5 rounded bg-rose-500/20 text-rose-200 text-[12px] font-semibold">
+                    {k}
+                  </span>
+                ))}
+              </div>
+              <span className="text-rose-100">{line}</span>
+            </div>
+          ))
+        ) : (
+          <p className="text-[13px] text-emerald-300">
+            No unusual activity: no place breaks the 80 µg/m³ limit or rises far above its own recent levels.
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="text-[13px] uppercase tracking-wide text-zinc-500">Comparison with standards</div>
         <StandardBar label="Area average" value={cur.mean} />
         <StandardBar label="95th percentile (250 m)" value={cur.p95} />
         <StandardBar label={`Highest cell · ${cur.max_near}`} value={cur.max} />
-        <div className="flex gap-3 text-[9px] text-zinc-500">
+        <div className="flex gap-3 text-[12px] text-zinc-500">
           <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-white inline-block" />CPCB 80</span>
           <span className="flex items-center gap-1"><span className="w-2 h-px bg-sky-300 inline-block" />WHO 25</span>
         </div>
-        <table className="w-full text-[10px] mt-1">
+        <table className="w-full text-[13px] mt-1">
           <tbody className="[&_td]:py-0.5">
             <tr>
               <td className="text-zinc-400">30-day average vs annual standard (40)</td>
@@ -202,13 +238,13 @@ function AnalysisPanel({ a }: { a: Analysis }) {
       </div>
 
       <div className="space-y-1">
-        <div className="text-[10px] uppercase tracking-wide text-zinc-500">Share of area by band</div>
+        <div className="text-[13px] uppercase tracking-wide text-zinc-500">Share of area by band</div>
         <div className="flex h-2.5 rounded overflow-hidden border border-[#242938]">
           {BANDS.map((b) => (
             <div key={b.key} style={{ width: `${(cur.band_shares[b.key] ?? 0) * 100}%`, background: b.color }} title={b.label} />
           ))}
         </div>
-        <div className="grid grid-cols-2 gap-x-2 text-[10px] text-zinc-400">
+        <div className="grid grid-cols-2 gap-x-2 text-[13px] text-zinc-400">
           {BANDS.map((b) => (
             <span key={b.key} className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-sm inline-block" style={{ background: b.color }} />
@@ -219,7 +255,7 @@ function AnalysisPanel({ a }: { a: Analysis }) {
       </div>
 
       {a.population && (
-        <div className="space-y-0.5 text-[10px]">
+        <div className="space-y-0.5 text-[13px]">
           <div className="uppercase tracking-wide text-zinc-500">Population exposure</div>
           <div className="text-zinc-300">
             <span className="font-mono text-zinc-100">{people(a.population.above_naaqs)}</span> people above 80 µg/m³ (
@@ -230,7 +266,7 @@ function AnalysisPanel({ a }: { a: Analysis }) {
       )}
 
       {a.hotspots.length > 0 && (
-        <div className="space-y-1 text-[10px]">
+        <div className="space-y-1 text-[13px]">
           <div className="uppercase tracking-wide text-zinc-500">Hotspots</div>
           {a.hotspots.map((h, i) => (
             <div key={h.rank} className="flex items-start justify-between gap-2">
@@ -248,7 +284,7 @@ function AnalysisPanel({ a }: { a: Analysis }) {
         </div>
       )}
 
-      <div className="space-y-1 text-[10px]">
+      <div className="space-y-1 text-[13px]">
         <div className="uppercase tracking-wide text-zinc-500">Forecast alerts (24 h)</div>
         {a.texts.forecast.map((line) => (
           <p key={line} className="text-zinc-300 leading-relaxed">
@@ -257,11 +293,11 @@ function AnalysisPanel({ a }: { a: Analysis }) {
         ))}
       </div>
 
-      <div className="space-y-1 text-[10px]">
+      <div className="space-y-1 text-[13px]">
         <div className="uppercase tracking-wide text-zinc-500">Weather-adjusted trend</div>
         {a.trend && <TrendSparkline trend={a.trend} />}
         {a.trend && (
-          <div className="flex gap-3 text-[9px] text-zinc-500">
+          <div className="flex gap-3 text-[12px] text-zinc-500">
             <span className="text-blue-400">— observed</span>
             <span className="text-emerald-400">— weather-adjusted</span>
             <span className="text-rose-400">- - 80 standard</span>
@@ -270,7 +306,7 @@ function AnalysisPanel({ a }: { a: Analysis }) {
         <p className="text-zinc-300 leading-relaxed">{a.texts.trend[0]}</p>
       </div>
 
-      <p className="text-[9px] text-zinc-500 leading-relaxed">
+      <p className="text-[12px] text-zinc-500 leading-relaxed">
         Model estimates at 250 m; typical error about ±23 µg/m³ per location and day. Use for trends and hotspots.
       </p>
     </div>
@@ -364,6 +400,17 @@ function getAgentResponse(
   analysis: Analysis | null
 ): string {
   const q = query.toLowerCase();
+
+  // 0. Suspicious / unusual activity
+  if (/suspicious|unusual|anomal|spike|illegal|violation/.test(q)) {
+    if (!analysis) {
+      return `Click **'Analyse Area'** first: I check every 250 m cell of **${locationName}** against the CPCB limit, its own last 7 days and the air arriving from upwind.`;
+    }
+    const lines = analysis.texts.anomalies ?? [];
+    return lines.length
+      ? `**Unusual activity on ${analysis.date}:**\n${lines.map((l) => `• ${l}`).join('\n')}`
+      : `No unusual activity on ${analysis.date}: no place breaks the 80 µg/m³ limit or rises far above its own recent levels.`;
+  }
 
   // 1. Standards & Safety
   if (
@@ -543,12 +590,28 @@ interface ReportGeneratorProps {
   coords: [number, number] | null | undefined; // [lat, lon]
   isOpen?: boolean;
   onClose?: () => void;
+  /** Uploaded days (from /downscale/dates): when given, reports are made for these days of the uploaded data. */
+  availableDates?: string[];
+  selectedDate?: string;
+  onDateChange?: (date: string) => void;
 }
 
-export default function ReportGenerator({ locationName, coords, isOpen, onClose }: ReportGeneratorProps) {
+export default function ReportGenerator({
+  locationName,
+  coords,
+  isOpen,
+  onClose,
+  availableDates,
+  selectedDate,
+  onDateChange,
+}: ReportGeneratorProps) {
   const [latestDate] = useState<string>(() => isoDate(new Date(Date.now() - WEATHER_LAG_DAYS * DAY_MS)));
   const [language, setLanguage] = useState<LanguageId>('en');
-  const [reportDate, setReportDate] = useState<string>(latestDate);
+  const [ownDate, setOwnDate] = useState<string>(latestDate);
+  const useUploaded = Boolean(availableDates && availableDates.length > 0);
+  // with uploaded data the date is shared with the map and the pinpoint card
+  const reportDate = useUploaded && selectedDate ? selectedDate : ownDate;
+  const setReportDate = (d: string) => (useUploaded && onDateChange ? onDateChange(d) : setOwnDate(d));
   const [busy, setBusy] = useState<'analysis' | 'pdf' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -620,8 +683,23 @@ Click any suggested question below or type your inquiry to get instant answers!`
       language,
       use_ai: true,
       city: guessCity(locationName),
+      ...(useUploaded ? { data_source: 'upload' } : {}),
     };
-    const token = typeof window !== 'undefined' ? window.localStorage.getItem('access_token') : null;
+
+    // Ensure we retrieve a fresh access token from Supabase session
+    let token = typeof window !== 'undefined' ? window.localStorage.getItem('access_token') : null;
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session?.access_token) {
+        token = sessionData.session.access_token;
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('access_token', token);
+        }
+      }
+    } catch {
+      // Fall back to localStorage cached token
+    }
+
     let res: Response;
     try {
       res = await fetch(`${API_BASE}/api/v1/reports/${path}`, {
@@ -661,6 +739,7 @@ Click any suggested question below or type your inquiry to get instant answers!`
       const res = await request('analysis');
       const data = (await res.json()) as Analysis;
       setAnalysis(data);
+      setActiveTab('analysis'); // show the full analysis (flags, comparison, exposure, forecast, trend)
 
       // Append intelligent notification in chat
       const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -784,14 +863,18 @@ Click any suggested question below or type your inquiry to get instant answers!`
           {/* Date Picker */}
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] font-medium text-zinc-400">Date:</span>
-            <input
-              type="date"
-              value={reportDate}
-              max={latestDate}
-              min="2018-07-01"
-              onChange={(e) => setReportDate(e.target.value)}
-              className="h-6 px-2 rounded bg-[#10131c] border border-[#2e3547] text-zinc-200 text-[11px] [color-scheme:dark]"
-            />
+            {useUploaded ? (
+              <DatePicker availableDates={availableDates!} selectedDate={reportDate} onDateChange={setReportDate} />
+            ) : (
+              <input
+                type="date"
+                value={reportDate}
+                max={latestDate}
+                min="2018-07-01"
+                onChange={(e) => setReportDate(e.target.value)}
+                className="h-6 px-2 rounded bg-[#10131c] border border-[#2e3547] text-zinc-200 text-[11px] [color-scheme:dark]"
+              />
+            )}
           </div>
 
           {/* Action Buttons */}

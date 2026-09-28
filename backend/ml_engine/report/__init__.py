@@ -21,8 +21,8 @@ from ..env import offline, setting
 from .analysis import analyse_run
 from .llm import generate_narrative
 from .pdf import build_pdf, build_unavailable_pdf, resolve_fonts
-from .texts import (BAND, LANGUAGES, SOURCE, STATUS, forecast_texts, notice_text, recommendations, summary_text,
-                    trend_texts)
+from .texts import (ANOMALY, BAND, LANGUAGES, SOURCE, STATUS, forecast_texts, notice_text, recommendations, summary_text,
+                    trend_texts, anomaly_lines)
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +99,62 @@ def gather_facts(bbox=None, date=None, city=None, area_name=None, ee_project=Non
     return None, {"code": "unavailable", "reason": reason, "requested_date": str(day.date()), "used_date": None}
 
 
+def gather_upload_facts(input_dir, date=None, area_name=None, ee_project=None) -> tuple[dict | None, dict | None]:
+    """Like ``gather_facts`` for the uploaded daily GeoTIFFs in ``input_dir``: the model run on those files
+    for ``date`` (one of the uploaded days); while that run is being made (first time: a few minutes) or if it
+    fails, the most recent stored model map of the uploaded area; else ``facts`` is None."""
+    from ..ingestion.files import load_no2_geotiffs
+
+    dates, _, grid = load_no2_geotiffs(input_dir)
+    days = [str(d.date()) for d in dates]
+    day = date if date in days else days[-1]
+    name = area_name or "Uploaded area"
+    run_dir = service._files_run_dir(input_dir)
+    if (run_dir / "report.json").exists():
+        return analyse_run(run_dir, day, name), None
+    if offline():
+        reason = "offline"
+    else:
+        try:
+            future = _executor.submit(service._run_files, input_dir, ee_project or setting("EE_PROJECT"))
+            return analyse_run(future.result(timeout=RUN_WAIT_S), day, name), None
+        except Exception as exc:  # noqa: BLE001 - first run still going, Earth Engine quota/outage
+            log.warning("Model run on uploaded files not ready (%s); looking for a stored map", exc)
+            reason = _short_reason(exc)
+    import pandas as pd
+
+    for stored_dir, use_day in service.cached_runs(grid.bbox, pd.Timestamp(day)):
+        try:
+            facts = analyse_run(stored_dir, use_day, name)
+        except Exception:  # noqa: BLE001
+            continue
+        if use_day == day:
+            return facts, None
+        facts["notice"] = {"code": "cached", "reason": reason, "requested_date": day, "used_date": use_day}
+        return facts, facts["notice"]
+    return None, {"code": "unavailable", "reason": reason, "requested_date": day, "used_date": None}
+
+
+def generate_upload_report(input_dir, date=None, area_name=None, language="en", use_ai=True, ee_project=None,
+                           gemini_api_key=None) -> tuple[bytes, dict]:
+    """PDF for one of the uploaded days, with the same fallbacks as ``generate_report``."""
+    if language not in LANGUAGES:
+        raise ValueError(f"language must be one of {sorted(LANGUAGES)}")
+    started = time.monotonic()
+    facts, notice = gather_upload_facts(input_dir, date=date, area_name=area_name, ee_project=ee_project)
+    return _render(facts, notice, area_name or "Uploaded area", language, use_ai, gemini_api_key, started)
+
+
+def analyse_upload(input_dir, date=None, area_name=None, language="en", ee_project=None) -> dict:
+    """The upload report's analysis as JSON (no PDF, no Gemini call)."""
+    if language not in LANGUAGES:
+        raise ValueError(f"language must be one of {sorted(LANGUAGES)}")
+    facts, notice = gather_upload_facts(input_dir, date=date, area_name=area_name, ee_project=ee_project)
+    if facts is None:
+        raise RuntimeError(f"No model output for the uploaded data yet: {notice['reason']}")
+    return public_facts(facts, language)
+
+
 def generate_report(bbox=None, date=None, city=None, area_name=None, language="en", use_ai=True,
                     ee_project=None, source="gee", gemini_api_key=None) -> tuple[bytes, dict]:
     """PDF bytes + metadata (status, narrative source, language actually used, notice). Always returns a
@@ -109,11 +165,16 @@ def generate_report(bbox=None, date=None, city=None, area_name=None, language="e
     started = time.monotonic()
     facts, notice = gather_facts(bbox=bbox, date=date, city=city, area_name=area_name, ee_project=ee_project,
                                  source=source)
+    return _render(facts, notice, area_name or city or "Selected area", language, use_ai, gemini_api_key, started)
+
+
+def _render(facts, notice, name: str, language: str, use_ai: bool, gemini_api_key, started: float) -> tuple[bytes, dict]:
+    """PDF for ``facts`` (or the standards document when None) with every fallback: Gemini -> templates,
+    layout failure in Hindi/Marathi -> English, any other failure -> standards document."""
     used_language, fallback = language, False
     if language != "en" and not resolve_fonts()[2]:
         log.warning("No Devanagari font found; producing the report in English")
         used_language, fallback = "en", True
-    name = area_name or city or "Selected area"
     meta = {"status": "unavailable", "area_mean": None, "date": notice["requested_date"] if notice else None,
             "language": used_language, "narrative": "template", "narrative_model": None,
             "notice": notice["code"] if notice else None}
@@ -161,12 +222,15 @@ def public_facts(facts: dict, language: str = "en") -> dict:
         "status": STATUS[language][facts["current"]["status"]],
         "band": BAND[language][facts["current"]["band"]],
         "hotspot_sources": [[SOURCE[language][s] for s in h["sources"]] for h in facts["hotspots"]],
+        "anomaly_kinds": [[_plain(ANOMALY[language][k]) for k in a["kinds"]] for a in facts.get("anomalies") or []],
+        "anomaly_title": _plain(ANOMALY[language]["h"]),
     }
     out["texts"] = {
         "summary": _plain(summary_text(facts, language)),
         "forecast": [_plain(t) for t in forecast_texts(facts, language)],
         "trend": [_plain(t) for t in trend_texts(facts, language)],
         "recommendations": [_plain(t) for t in recommendations(facts, language)],
+        "anomalies": [_plain(t) for t in anomaly_lines(facts, language)],
         "notice": notice_text(facts["notice"], language) if facts.get("notice") else None,
     }
     return out

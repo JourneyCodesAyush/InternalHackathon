@@ -20,15 +20,22 @@ export interface UseHomeGeoTiffLoaderReturn {
 
 const API_BASE = 'http://localhost:8000';
 
-export function useHomeGeoTiffLoader(): UseHomeGeoTiffLoaderReturn {
+/**
+ * NO₂ grid for the home map. With ``date`` (one of the uploaded days from ``/downscale/dates``) it loads that
+ * day's uploaded file exactly as the Plume Flow page does (``/downscale/geotiff?timestamp=<date>T00:00:00Z``).
+ */
+export function useHomeGeoTiffLoader(date?: string): UseHomeGeoTiffLoaderReturn {
   const [data, setData] = useState<HomeGeoTiffData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const cachedDataRef = useRef<HomeGeoTiffData | null>(null);
+  const cacheRef = useRef<Map<string, HomeGeoTiffData>>(new Map());
+  const cacheKey = date ?? 'latest';
 
   const load = useCallback(async (): Promise<HomeGeoTiffData> => {
-    if (cachedDataRef.current) {
-      return cachedDataRef.current;
+    const cached = cacheRef.current.get(cacheKey);
+    if (cached) {
+      setData(cached);
+      return cached;
     }
 
     setIsLoading(true);
@@ -41,7 +48,9 @@ export function useHomeGeoTiffLoader(): UseHomeGeoTiffLoaderReturn {
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      const url = `${API_BASE}/api/v1/downscale/geotiff`;
+      const url = date
+        ? `${API_BASE}/api/v1/downscale/geotiff?timestamp=${encodeURIComponent(`${date}T00:00:00Z`)}`
+        : `${API_BASE}/api/v1/downscale/geotiff`;
       const response = await fetch(url, { headers });
 
       if (!response.ok) {
@@ -77,7 +86,7 @@ export function useHomeGeoTiffLoader(): UseHomeGeoTiffLoaderReturn {
         bbox: frameBbox,
       };
 
-      cachedDataRef.current = loadedData;
+      cacheRef.current.set(cacheKey, loadedData);
       setData(loadedData);
       return loadedData;
     } catch (err: unknown) {
@@ -94,17 +103,18 @@ export function useHomeGeoTiffLoader(): UseHomeGeoTiffLoaderReturn {
         bbox: synth.bbox,
       };
 
-      cachedDataRef.current = fallbackData;
+      cacheRef.current.set(cacheKey, fallbackData);
       setData(fallbackData);
       return fallbackData;
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [date, cacheKey]);
 
   useEffect(() => {
+    if (date === '') return; // the uploaded dates are still loading
     load();
-  }, [load]);
+  }, [load, date]);
 
   return {
     data,

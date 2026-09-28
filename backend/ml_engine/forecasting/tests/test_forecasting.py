@@ -514,3 +514,106 @@ class TestForecastEngine:
         result, paths = engine.predict_and_export(gaussian_field, u, v, y, x, output_dir=tmp_path)
         assert "netcdf" in paths
         assert Path(paths["netcdf"]).exists()
+
+
+# ---------------------------------------------------------------------------
+# 11. Extended Physics Tests: Dynamic Wind, Terrain & Categorized Sources
+# ---------------------------------------------------------------------------
+
+class TestExtendedPhysics:
+    def test_dynamic_hourly_wind_interpolation(self, small_grid, gaussian_field):
+        from ml_engine.forecasting.physics import ImprovedPhysicsSolver
+        from ml_engine.forecasting.config import PhysicsConfig
+
+        H, W, y, x = small_grid
+        # Hour 0 wind is purely eastward (+3, 0)
+        u0 = np.full((H, W), 3.0, dtype=np.float32)
+        v0 = np.full((H, W), 0.0, dtype=np.float32)
+        # Hour 1 wind shifts to northward (0, +3)
+        u1 = np.full((H, W), 0.0, dtype=np.float32)
+        v1 = np.full((H, W), 3.0, dtype=np.float32)
+
+        cfg = PhysicsConfig(enable_dynamic_wind=True)
+        solver = ImprovedPhysicsSolver(H, W, 277.0, 277.0, cfg)
+        ds = solver.forecast(gaussian_field, [(u0, v0), (u1, v1)], y, x)
+
+        assert ds["no2_forecast"].shape == (4, H, W)
+        assert not np.isnan(ds["no2_forecast"].values).any()
+
+    def test_terrain_aware_transport_deflection(self, small_grid, gaussian_field, constant_wind):
+        from ml_engine.forecasting.physics import ImprovedPhysicsSolver
+        from ml_engine.forecasting.config import PhysicsConfig
+
+        H, W, y, x = small_grid
+        u, v = constant_wind
+        # Steep DEM ridge along center
+        rr, cc = np.mgrid[0:H, 0:W]
+        dem = (500.0 * np.exp(-((cc - W // 2) ** 2) / 8.0)).astype(np.float32)
+        slope = np.hypot(np.gradient(dem, axis=0), np.gradient(dem, axis=1)).astype(np.float32)
+
+        cfg = PhysicsConfig(enable_terrain_effect=True)
+        solver = ImprovedPhysicsSolver(H, W, 277.0, 277.0, cfg)
+        ds_terrain = solver.forecast(gaussian_field, [(u, v)], y, x, dem=dem, slope=slope)
+        ds_flat = solver.forecast(gaussian_field, [(u, v)], y, x)
+
+        # Output with terrain should physically differ from flat terrain
+        diff = np.max(np.abs(ds_terrain["no2_forecast"].values - ds_flat["no2_forecast"].values))
+        assert diff > 0.0
+
+    def test_persistent_emission_sources(self, small_grid, gaussian_field, constant_wind):
+        from ml_engine.forecasting.physics import ImprovedPhysicsSolver
+        from ml_engine.forecasting.config import PhysicsConfig
+
+        H, W, y, x = small_grid
+        u, v = constant_wind
+        power_plants = np.zeros((H, W), dtype=np.float32)
+        power_plants[H // 2, W // 2] = 1.0
+
+        cfg = PhysicsConfig(enable_source_persistence=True, emission_mode="persistent")
+        solver = ImprovedPhysicsSolver(H, W, 277.0, 277.0, cfg)
+        ds = solver.forecast(
+            gaussian_field,
+            [(u, v)],
+            y,
+            x,
+            emission_sources={"power_plants": power_plants},
+        )
+        assert ds["no2_forecast"].shape == (4, H, W)
+        assert float(ds["no2_forecast"].values[-1, H // 2, W // 2]) > 0.0
+
+
+# ---------------------------------------------------------------------------
+# 12. Synthetic Atmospheric Sequence Generator & Dual Loader Tests
+# ---------------------------------------------------------------------------
+
+class TestSyntheticAndDualLoader:
+    @pytest.mark.parametrize("scenario", [
+        "shifting_wind",
+        "rotating_vortex",
+        "plume_merging",
+        "plume_splitting",
+        "mountain_deflection",
+        "urban_hotspot",
+    ])
+    def test_synthetic_scenarios(self, scenario):
+        from ml_engine.forecasting.datasets.synthetic import SyntheticAtmosphericGenerator
+
+        gen = SyntheticAtmosphericGenerator(seed=42)
+        dyn, sta, tgt, meta = gen.generate_sample(h=32, w=32, seq_len=4, output_horizons=4, scenario=scenario)
+
+        assert dyn.shape == (4, 10, 32, 32)
+        assert sta.shape == (7, 32, 32)
+        assert tgt.shape == (4, 32, 32)
+        assert meta["scenario"] == scenario
+        assert not np.isnan(dyn).any()
+        assert not np.isnan(tgt).any()
+
+    def test_dual_dataset_loader_synthetic_mode(self):
+        from ml_engine.forecasting.datasets.loader import load_dataset
+
+        train_ds, val_ds = load_dataset(mode="synthetic", num_samples=8, h=24, w=24)
+        assert len(train_ds) > 0
+        assert len(val_ds) > 0
+        sample = train_ds[0]
+        assert sample["dynamic"].shape[1:] == (10, 24, 24)
+

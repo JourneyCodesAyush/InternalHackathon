@@ -119,18 +119,26 @@ def main():
         ),
     )
 
+    from ml_engine.forecasting.datasets.loader import load_dataset, get_configured_dataset_mode
+
+    data_mode = get_configured_dataset_mode()
     data_dir = Path(args.data_dir)
     h5_files = list(data_dir.glob("*.h5")) if data_dir.exists() else []
 
-    if h5_files:
-        log.info("Found %d preprocessed data tiles in %s. Loading dataset...", len(h5_files), data_dir)
+    if data_mode == "real" and h5_files:
+        log.info("Loading REAL dataset from %d preprocessed data tiles in %s...", len(h5_files), data_dir)
         full_ds = ForecastDataset.from_cache(data_dir, split="train")
         n_val = max(1, int(len(full_ds) * cfg.trainer.val_fraction))
         n_train = len(full_ds) - n_val
         train_ds, val_ds = full_ds.split(n_train, n_val)
     else:
-        log.info("No cached HDF5 dataset found in '%s'. Generating %d rich multi-regime spatiotemporal training sequences...", data_dir, args.synth_samples)
-        train_ds, val_ds = build_synthetic_dataset(
+        log.info(
+            "Generating rich multi-regime spatiotemporal sequences via dual loader (mode=%s, %d samples)...",
+            data_mode, args.synth_samples
+        )
+        train_ds, val_ds = load_dataset(
+            cfg=cfg,
+            mode="synthetic",
             num_samples=args.synth_samples,
             h=48,
             w=48,

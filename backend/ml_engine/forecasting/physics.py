@@ -140,11 +140,15 @@ class ImprovedPhysicsSolver:
         return np.clip(c, 0.0, None)
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
     def forecast_frames(
         self,
         c0: np.ndarray,
         wind_sequence: list[tuple[np.ndarray, np.ndarray]],
         *,
+        dem: np.ndarray | None = None,
+        slope: np.ndarray | None = None,
+        emission_sources: dict[str, np.ndarray] | None = None,
         preserve_mass: bool = True,
     ) -> Iterator[tuple[int, np.ndarray]]:
         """Yield (horizon_min, concentration_array) for each 30-min frame.
@@ -155,6 +159,10 @@ class ImprovedPhysicsSolver:
         wind_sequence   : list of (u, v) arrays on the fine grid, one per hour.
                           Element 0 is the wind at t=0, element 1 at t+60 min, …
                           If fewer are provided than needed, the last element repeats.
+        dem             : optional DEM elevation array (H × W in metres).
+        slope           : optional terrain slope array (H × W in degrees).
+        emission_sources: optional dict with categorized masks/rates:
+                          {"power_plants": arr, "industrial": arr, "traffic": arr}.
         preserve_mass   : enforce mass conservation at each export frame.
 
         Yields
@@ -165,18 +173,80 @@ class ImprovedPhysicsSolver:
         c0 = np.nan_to_num(c0.astype(np.float64), nan=float(np.nanmean(c0)))
         tau = cfg.lifetime_h * 3600.0
         dt = cfg.dt_s
-        decay = math.exp(-dt / tau)
-
-        if cfg.emission_mode == "persistent":
-            src_per_step = c0 * (1.0 - decay)
-        else:
-            src_per_step = np.zeros_like(c0)
 
         total_mass_0 = float(np.nansum(c0))
 
-        def _wind_at(elapsed_min: float):
-            idx = min(int(elapsed_min // 60), len(wind_sequence) - 1)
-            return wind_sequence[idx]
+        # Terrain deflection and aerodynamic drag factors
+        # Lightweight physical model: ridges deflect flow orthogonal to gradient,
+        # steep slopes create aerodynamic drag (reducing wind speed).
+        terrain_factors: tuple[np.ndarray, np.ndarray] | None = None
+        if cfg.enable_terrain_effect and dem is not None and slope is not None:
+            # Gradients of elevation (m / m)
+            grad_y, grad_x = np.gradient(dem, self.dy, self.dx)
+            grad_norm = np.hypot(grad_x, grad_y) + 1e-6
+            # Ridge tangent unit vector (-grad_y, grad_x)
+            tx = -grad_y / grad_norm
+            ty = grad_x / grad_norm
+            # Slope drag coefficient (1 - 0.5 * sin(slope))
+            slope_rad = np.radians(np.clip(slope, 0.0, 60.0))
+            drag = np.clip(1.0 - 0.4 * np.sin(slope_rad), 0.2, 1.0)
+            terrain_factors = (tx, ty, drag, grad_norm)
+
+        def _modify_wind_with_terrain(u_in: np.ndarray, v_in: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            if terrain_factors is None:
+                return u_in, v_in
+            tx, ty, drag, grad_norm = terrain_factors
+            # Drag reduces speed
+            u_drag = u_in * drag
+            v_drag = v_in * drag
+            # Gentle deflection along ridge contours where steep
+            dot = u_drag * tx + v_drag * ty
+            deflect_strength = np.clip(grad_norm * 0.1, 0.0, 0.3)
+            u_mod = (1.0 - deflect_strength) * u_drag + deflect_strength * (dot * tx)
+            v_mod = (1.0 - deflect_strength) * v_drag + deflect_strength * (dot * ty)
+            return u_mod.astype(np.float64), v_mod.astype(np.float64)
+
+        # Build persistent emission base map
+        source_base = np.zeros_like(c0)
+        if cfg.enable_source_persistence and cfg.emission_mode == "persistent":
+            if emission_sources:
+                # Weighted mixture of categorized hotspots
+                p_plant = emission_sources.get("power_plants", 0.0)
+                ind = emission_sources.get("industrial", 0.0)
+                traf = emission_sources.get("traffic", 0.0)
+                # Combine hotspot intensity into baseline emission rate
+                hotspot_boost = (p_plant * 2.0 + ind * 1.5 + traf * 1.0)
+                if isinstance(hotspot_boost, np.ndarray) and hotspot_boost.max() > 0:
+                    hotspot_norm = hotspot_boost / (hotspot_boost.max() + 1e-6)
+                    source_base = c0 * (0.8 + 0.4 * hotspot_norm)
+                else:
+                    source_base = c0.copy()
+            else:
+                source_base = c0.copy()
+
+        def _wind_at(elapsed_min: float) -> tuple[np.ndarray, np.ndarray]:
+            """Retrieve continuously interpolated wind at elapsed minutes."""
+            if not cfg.enable_dynamic_wind or len(wind_sequence) <= 1:
+                idx = min(int(elapsed_min // 60), len(wind_sequence) - 1)
+                u, v = wind_sequence[idx]
+                return _modify_wind_with_terrain(u, v)
+
+            # Continuous linear interpolation between hourly ERA5 snapshots
+            hour_float = elapsed_min / 60.0
+            idx0 = int(math.floor(hour_float))
+            idx1 = idx0 + 1
+            alpha = hour_float - idx0
+
+            if idx0 >= len(wind_sequence) - 1:
+                u, v = wind_sequence[-1]
+                return _modify_wind_with_terrain(u, v)
+
+            u0, v0 = wind_sequence[idx0]
+            u1, v1 = wind_sequence[min(idx1, len(wind_sequence) - 1)]
+
+            u_interp = (1.0 - alpha) * u0 + alpha * u1
+            v_interp = (1.0 - alpha) * v0 + alpha * v1
+            return _modify_wind_with_terrain(u_interp, v_interp)
 
         c = c0.copy()
         elapsed = 0.0  # seconds
@@ -188,7 +258,7 @@ class ImprovedPhysicsSolver:
             u, v = _wind_at(elapsed / 60.0)
             # recompute decay & source for partial step
             d = math.exp(-step / tau)
-            src = c0 * (1.0 - d) if cfg.emission_mode == "persistent" else 0.0
+            src = source_base * (1.0 - d) if (cfg.emission_mode == "persistent" and cfg.enable_source_persistence) else 0.0
             c = self._step(c, u, v, step, src, d)
             elapsed += step
 
@@ -206,6 +276,10 @@ class ImprovedPhysicsSolver:
         wind_sequence: list[tuple[np.ndarray, np.ndarray]],
         y: np.ndarray,
         x: np.ndarray,
+        *,
+        dem: np.ndarray | None = None,
+        slope: np.ndarray | None = None,
+        emission_sources: dict[str, np.ndarray] | None = None,
         preserve_mass: bool = True,
     ) -> xr.Dataset:
         """Run the solver and return a Dataset with all forecast frames.
@@ -221,7 +295,14 @@ class ImprovedPhysicsSolver:
         mass_errors = []
         total_mass_0 = float(np.nansum(c0))
 
-        for h_min, c in self.forecast_frames(c0, wind_sequence, preserve_mass=preserve_mass):
+        for h_min, c in self.forecast_frames(
+            c0,
+            wind_sequence,
+            dem=dem,
+            slope=slope,
+            emission_sources=emission_sources,
+            preserve_mass=preserve_mass,
+        ):
             frames.append(c)
             horizons.append(h_min)
             err = abs(float(np.nansum(c)) - total_mass_0) / (total_mass_0 + 1e-12)
