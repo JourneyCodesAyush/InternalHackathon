@@ -5,13 +5,17 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { Globe2, Map as MapIcon, Loader2, X, Info, Pause, Play, RefreshCw, AlertTriangle, Wind, RotateCw, Satellite } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
-import { MAX_COLUMN, MIN_COLUMN, type GlobeFrames, type HoverInfo } from '../components/globe/GlobeCanvas';
+import { MAX_COLUMN, MIN_COLUMN, type GlobeApi, type GlobeFrames, type HoverInfo } from '../components/globe/GlobeCanvas';
+import type { FlatMapApi } from '../components/globe/FlatMap';
 import { fetchGlobalSnapshot, hoursAgo, syntheticSnapshot, type GlobalSnapshot } from '../components/globe/globeData';
 import { explainRegion } from '../components/globe/regionInsights';
 import type { FlowRequest, FlowResult, FlowProgress } from '../components/globe/globeFlow.worker';
 
 // WebGL needs the browser: render the canvas on the client only
 const GlobeCanvas = dynamic(() => import('../components/globe/GlobeCanvas'), { ssr: false });
+const FlatMap = dynamic(() => import('../components/globe/FlatMap'), { ssr: false });
+
+const FADE_MS = 450; // cross-fade between the unrolled globe and the 2-D map
 
 const FRAME_HOURS = Array.from({ length: 13 }, (_, h) => h); // +0 .. +12 h
 const NEWEST_HOURS = 6;
@@ -21,6 +25,15 @@ const LEGEND_GRADIENT =
   'linear-gradient(90deg, rgba(59,26,115,0) 0%, #3b1a73 18%, #9e298c 34%, #ed5947 55%, #fcb338 77%, #fff5b3 100%)';
 
 type Phase = 'loading' | 'computing' | 'ready' | 'error';
+type ViewMode = '3d' | '2d';
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Poll for a ref that a dynamically loaded component fills in. */
+async function whenSet<T>(ref: React.MutableRefObject<T | null>): Promise<T> {
+  while (!ref.current) await wait(30);
+  return ref.current;
+}
 
 function fmtAgo(h: number | null): string {
   if (h === null) return '—';
@@ -54,6 +67,53 @@ export default function GlobePage() {
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const workerRef = useRef<Worker | null>(null);
+  const globeApi = useRef<GlobeApi | null>(null);
+  const flatApi = useRef<FlatMapApi | null>(null);
+  const [mode, setMode] = useState<ViewMode>('3d');
+  const [transitioning, setTransitioning] = useState(false);
+  const [flatMounted, setFlatMounted] = useState(false);
+  const [flatVisible, setFlatVisible] = useState(false);
+
+  /**
+   * 3-D -> 2-D: the sphere unrolls into a Web-Mercator sheet around the current view, then the MapLibre map
+   * (placed at exactly the same centre and scale) fades in over it. 2-D -> 3-D runs the same in reverse.
+   */
+  const toggleView = useCallback(async () => {
+    if (transitioning) return;
+    setTransitioning(true);
+    setHover(null);
+    try {
+      const globe = await whenSet(globeApi);
+      if (mode === '3d') {
+        setFlatMounted(true);
+        const [view, flat] = await Promise.all([globe.flatten(1300), whenSet(flatApi)]);
+        flat.jumpTo(view);
+        await flat.ready();
+        setFlatVisible(true);
+        await wait(FADE_MS);
+        globe.setActive(false);
+        setMode('2d');
+      } else {
+        const flat = await whenSet(flatApi);
+        let view = flat.getView();
+        view.lat = Math.max(-68, Math.min(68, view.lat));
+        const [zMin, zMax] = globe.zoomRange(view.lat);
+        const zoom = Math.max(zMin, Math.min(zMax, view.zoom));
+        if (Math.abs(zoom - view.zoom) > 0.01 || view.lat !== flat.getView().lat) {
+          await flat.easeTo({ ...view, zoom }, 650);
+          view = { ...view, zoom };
+        }
+        globe.setActive(true);
+        globe.showFlat(view);
+        setFlatVisible(false);
+        await wait(FADE_MS);
+        await globe.roll(1300);
+        setMode('3d');
+      }
+    } finally {
+      setTransitioning(false);
+    }
+  }, [mode, transitioning]);
 
   const snapshotRef = useRef<GlobalSnapshot | null>(null);
 
@@ -195,12 +255,64 @@ export default function GlobePage() {
           frameIndex={frameIndex}
           highlightNewest={highlightNewest}
           newestHours={NEWEST_HOURS}
-          autoRotate={autoRotate && !hover && !selected}
+          autoRotate={autoRotate && !hover && !selected && mode === '3d' && !transitioning}
           showWind={showWind}
           onHover={onHover}
           onSelect={onSelect}
           outline={insight?.outline ?? null}
+          apiRef={globeApi}
         />
+        {flatMounted && (
+          <div
+            className="absolute inset-0 transition-opacity ease-out"
+            style={{
+              opacity: flatVisible ? 1 : 0,
+              transitionDuration: `${FADE_MS}ms`,
+              pointerEvents: flatVisible && !transitioning ? 'auto' : 'none',
+            }}
+          >
+            <FlatMap
+              data={frames}
+              frameIndex={frameIndex}
+              highlightNewest={highlightNewest}
+              newestHours={NEWEST_HOURS}
+              showWind={showWind && flatVisible}
+              onHover={onHover}
+              onSelect={onSelect}
+              outline={insight?.outline ?? null}
+              apiRef={flatApi}
+            />
+          </div>
+        )}
+
+        {/* 3-D globe <-> 2-D map */}
+        <div
+          role="radiogroup"
+          aria-label="Globe or flat map"
+          className="absolute z-10 right-3 sm:right-4 top-1/2 -translate-y-1/2 flex p-0.5 rounded-full bg-[#11141d]/90 border border-[#2e3547] backdrop-blur-md shadow-xl"
+        >
+          <span
+            aria-hidden
+            className="absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] rounded-full bg-blue-600 shadow transition-transform duration-500 ease-[cubic-bezier(0.65,0,0.35,1)]"
+            style={{ transform: mode === '2d' ? 'translateX(100%)' : 'translateX(0)' }}
+          />
+          {(['3d', '2d'] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="radio"
+              aria-checked={mode === m}
+              disabled={transitioning || phase !== 'ready'}
+              onClick={() => mode !== m && toggleView()}
+              className={`relative z-10 flex items-center justify-center gap-1.5 w-[4.25rem] h-8 rounded-full text-[11px] font-semibold transition-colors cursor-pointer disabled:cursor-wait ${
+                mode === m ? 'text-white' : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              {m === '3d' ? <Globe2 className="w-3.5 h-3.5" /> : <MapIcon className="w-3.5 h-3.5" />}
+              {m === '3d' ? '3D' : '2D'}
+            </button>
+          ))}
+        </div>
 
         {/* Title and data status */}
         <div className="absolute top-3 left-3 right-3 sm:right-auto sm:top-4 sm:left-4 z-10 sm:max-w-sm p-3 rounded-lg bg-[#11141d]/90 border border-[#2e3547] backdrop-blur-md shadow-xl text-xs space-y-2">
@@ -383,7 +495,7 @@ export default function GlobePage() {
             {[
               { on: highlightNewest, set: setHighlightNewest, icon: Satellite, label: `Newest passes (≤${NEWEST_HOURS} h)` },
               { on: showWind, set: setShowWind, icon: Wind, label: 'Wind flow' },
-              { on: autoRotate, set: setAutoRotate, icon: RotateCw, label: 'Auto-rotate' },
+              ...(mode === '3d' ? [{ on: autoRotate, set: setAutoRotate, icon: RotateCw, label: 'Auto-rotate' }] : []),
             ].map(({ on, set, icon: Icon, label }) => (
               <button
                 key={label}

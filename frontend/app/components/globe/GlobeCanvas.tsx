@@ -39,7 +39,33 @@ interface GlobeCanvasProps {
   onSelect: (point: { lat: number; lon: number } | null) => void;
   /** Rings of [lon, lat] to outline (the selected country), or null. */
   outline: number[][][] | null;
+  /** Filled with the controls for the 2-D <-> 3-D transition once the scene exists. */
+  apiRef?: React.MutableRefObject<GlobeApi | null>;
 }
+
+/** Map view shared with the 2-D map: centre and MapLibre zoom (512 px world at zoom 0). */
+export interface MapView {
+  lat: number;
+  lon: number;
+  zoom: number;
+}
+
+export interface GlobeApi {
+  /** Unroll the sphere into a flat Web-Mercator map around the current view; resolves with the matching view. */
+  flatten: (durationMs?: number) => Promise<MapView>;
+  /** Show the flat map at ``view`` (instantly), ready to be rolled back up. */
+  showFlat: (view: MapView) => void;
+  /** Roll the flat map back into the globe. */
+  roll: (durationMs?: number) => Promise<void>;
+  /** Pause / resume rendering (paused while the 2-D map is shown). */
+  setActive: (active: boolean) => void;
+  /** Globe distance limits expressed as MapLibre zooms at ``lat`` (for easing the 2-D map before rolling up). */
+  zoomRange: (lat: number) => [number, number];
+}
+
+const FOV = 40;
+const MIN_DISTANCE = 1.35;
+const MAX_DISTANCE = 8;
 
 const VERTEX = /* glsl */ `
   varying vec2 vUv;
@@ -49,6 +75,43 @@ const VERTEX = /* glsl */ `
     vUv = uv;
     vec4 world = modelMatrix * vec4(position, 1.0);
     vNormal = normalize(mat3(modelMatrix) * normal);
+    vView = normalize(cameraPosition - world.xyz);
+    gl_Position = projectionMatrix * viewMatrix * world;
+  }
+`;
+
+// Globe surface. uMorph blends each vertex from the sphere to a flat Web-Mercator sheet tangent at the view
+// centre (uCenter, with its east/north axes), scaled so the centre keeps its size: the globe "unrolls".
+const GLOBE_VERTEX = /* glsl */ `
+  uniform float uMorph;
+  uniform vec3 uCenter;
+  uniform vec3 uEast;
+  uniform vec3 uNorth;
+  uniform float uLat0;
+  uniform float uLon0;
+  varying vec2 vUv;
+  varying vec3 vNormal;
+  varying vec3 vView;
+  varying float vRel;
+  varying float vRaw;
+  const float PI = 3.141592653589793;
+  float merc(float lat) {
+    float l = clamp(lat, -1.4844, 1.4844); // +-85.05 deg
+    return log(tan(PI / 4.0 + l / 2.0));
+  }
+  void main() {
+    vUv = uv;
+    float lon = uv.x * 2.0 * PI - PI;
+    float lat = uv.y * PI - PI / 2.0;
+    float raw = lon - uLon0;
+    float rel = raw - 2.0 * PI * floor((raw + PI) / (2.0 * PI));
+    vRel = rel;
+    vRaw = raw;
+    float k = cos(uLat0);
+    vec3 sheet = uCenter + uEast * (rel * k) + uNorth * ((merc(lat) - merc(uLat0)) * k);
+    vec3 p = mix(position, sheet, uMorph);
+    vec4 world = modelMatrix * vec4(p, 1.0);
+    vNormal = normalize(mat3(modelMatrix) * mix(normal, uCenter, uMorph));
     vView = normalize(cameraPosition - world.xyz);
     gl_Position = projectionMatrix * viewMatrix * world;
   }
@@ -67,9 +130,12 @@ const FRAGMENT = /* glsl */ `
   uniform float uHighlight;
   uniform float uNewest;
   uniform float uHasData;
+  uniform float uMorph;
   varying vec2 vUv;
   varying vec3 vNormal;
   varying vec3 vView;
+  varying float vRel;
+  varying float vRaw;
 
   vec3 ramp(float t) {
     // dark violet -> magenta -> orange -> pale yellow (perceptually ordered, readable on a dark globe)
@@ -85,6 +151,12 @@ const FRAGMENT = /* glsl */ `
   }
 
   void main() {
+    if (uMorph > 0.0005) {
+      // triangles straddling the seam opposite the view centre would stretch across the whole sheet:
+      // inside them the wrapped and unwrapped longitudes differ by a non-whole number of turns
+      float turns = (vRel - vRaw) / 6.283185307179586;
+      if (abs(turns - floor(turns + 0.5)) > 0.001) discard;
+    }
     vec3 base = texture2D(uBase, vUv).rgb;
     vec2 dUv = vec2(vUv.x, 1.0 - vUv.y);
     vec2 a = texture2D(uA, dUv).rg;
@@ -102,18 +174,19 @@ const FRAGMENT = /* glsl */ `
     col = mix(col, mix(vec3(0.55, 0.66, 0.85), vec3(0.08, 0.05, 0.12), alpha), line * 0.75);
     // soft limb darkening + rim light
     float ndv = clamp(dot(normalize(vNormal), normalize(vView)), 0.0, 1.0);
-    col *= 0.55 + 0.45 * pow(ndv, 0.6);
-    col += vec3(0.20, 0.35, 0.70) * pow(1.0 - ndv, 3.0) * 0.35;
+    col *= mix(0.55 + 0.45 * pow(ndv, 0.6), 1.0, uMorph);
+    col += vec3(0.20, 0.35, 0.70) * pow(1.0 - ndv, 3.0) * 0.35 * (1.0 - uMorph);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
 
 const ATMOSPHERE_FRAGMENT = /* glsl */ `
+  uniform float uOpacity;
   varying vec3 vNormal;
   varying vec3 vView;
   void main() {
     float rim = pow(1.0 - abs(dot(normalize(vNormal), normalize(vView))), 2.5);
-    gl_FragColor = vec4(0.30, 0.55, 1.0, 1.0) * rim * 0.9;
+    gl_FragColor = vec4(0.30, 0.55, 1.0, 1.0) * rim * 0.9 * uOpacity;
   }
 `;
 
@@ -148,6 +221,7 @@ export default function GlobeCanvas({
   onHover,
   onSelect,
   outline,
+  apiRef,
 }: GlobeCanvasProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<{
@@ -176,7 +250,7 @@ export default function GlobeCanvas({
     mount.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(40, mount.clientWidth / mount.clientHeight, 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(FOV, mount.clientWidth / mount.clientHeight, 0.01, 100);
     // start over South Asia: look from the direction of 20°N 78°E
     camera.position.copy(toXYZ(20, 78, 4.4, new THREE.Vector3()));
 
@@ -188,9 +262,16 @@ export default function GlobeCanvas({
     linesTexture.anisotropy = baseTexture.anisotropy;
     const empty = frameTexture(new Float32Array(2), 1, 1, 2);
     const material = new THREE.ShaderMaterial({
-      vertexShader: VERTEX,
+      vertexShader: GLOBE_VERTEX,
       fragmentShader: FRAGMENT,
+      side: THREE.DoubleSide,
       uniforms: {
+        uMorph: { value: 0 },
+        uCenter: { value: new THREE.Vector3(1, 0, 0) },
+        uEast: { value: new THREE.Vector3(0, 0, 1) },
+        uNorth: { value: new THREE.Vector3(0, 1, 0) },
+        uLat0: { value: 0 },
+        uLon0: { value: 0 },
         uBase: { value: baseTexture },
         uLines: { value: linesTexture },
         uA: { value: empty },
@@ -212,6 +293,7 @@ export default function GlobeCanvas({
       new THREE.ShaderMaterial({
         vertexShader: VERTEX,
         fragmentShader: ATMOSPHERE_FRAGMENT,
+        uniforms: { uOpacity: { value: 1 } },
         side: THREE.BackSide,
         blending: THREE.AdditiveBlending,
         transparent: true,
@@ -243,8 +325,8 @@ export default function GlobeCanvas({
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.enablePan = false;
-    controls.minDistance = 1.35;
-    controls.maxDistance = 8;
+    controls.minDistance = MIN_DISTANCE;
+    controls.maxDistance = MAX_DISTANCE;
     controls.rotateSpeed = 0.5;
     controls.zoomSpeed = 0.7;
     controls.autoRotateSpeed = 0.35;
@@ -259,6 +341,7 @@ export default function GlobeCanvas({
     const pointer = new THREE.Vector2();
     const pick = (e: PointerEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
+      if (material.uniforms.uMorph.value > 0) return { hit: undefined, rect }; // no picking while unrolled
       pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
       return { hit: raycaster.intersectObject(globe, false)[0], rect };
@@ -349,20 +432,117 @@ export default function GlobeCanvas({
       col.needsUpdate = true;
     };
 
+    // ---- 2-D <-> 3-D: unroll the sphere into a Web-Mercator sheet and back ----
+    const uniforms = material.uniforms;
+    const atmosphereUniforms = (atmosphere.material as THREE.ShaderMaterial).uniforms;
+    let active = true;
+    let morphing = false;
+    const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+    const setMorph = (m: number) => {
+      uniforms.uMorph.value = m;
+      atmosphereUniforms.uOpacity.value = Math.max(0, 1 - m * 2.5);
+      // wind streaks and the outline live on the sphere: fade them out as it unrolls
+      const fade = Math.max(0, 1 - m * 4);
+      (wind.material as THREE.LineBasicMaterial).opacity = 0.8 * fade;
+      (highlight.material as THREE.LineBasicMaterial).opacity = 0.95 * fade;
+    };
+    const setFrame = (lat: number, lon: number) => {
+      const center = toXYZ(lat, lon, 1, new THREE.Vector3());
+      const phi = ((lon + 180) / 360) * Math.PI * 2;
+      const east = new THREE.Vector3(Math.sin(phi), 0, Math.cos(phi)).normalize();
+      uniforms.uCenter.value.copy(center);
+      uniforms.uEast.value.copy(east);
+      uniforms.uNorth.value.copy(new THREE.Vector3().crossVectors(center, east).normalize());
+      uniforms.uLat0.value = (lat * Math.PI) / 180;
+      uniforms.uLon0.value = (lon * Math.PI) / 180;
+    };
+    // flat-sheet height visible at camera distance d, and the MapLibre zoom showing the same scale
+    const tanHalf = Math.tan(((FOV / 2) * Math.PI) / 180);
+    const zoomFor = (d: number, lat: number) =>
+      Math.log2((2 * Math.PI * Math.cos((lat * Math.PI) / 180) * mount.clientHeight) / (2 * (d - 1) * tanHalf * 512));
+    const distanceFor = (zoom: number, lat: number) =>
+      1 + (2 * Math.PI * Math.cos((lat * Math.PI) / 180) * mount.clientHeight) / (512 * Math.pow(2, zoom) * 2 * tanHalf);
+    const animate = (ms: number, step: (t: number) => void) =>
+      new Promise<void>((resolve) => {
+        const t0 = performance.now();
+        const tick = () => {
+          const t = Math.min(1, (performance.now() - t0) / ms);
+          step(ease(t));
+          if (t < 1) requestAnimationFrame(tick);
+          else resolve();
+        };
+        requestAnimationFrame(tick);
+      });
+    const view = () => {
+      const p = camera.position;
+      const d = p.length();
+      const lat = (Math.asin(p.y / d) * 180) / Math.PI;
+      // inverse of toXYZ: x = -cos(phi), z = sin(phi)
+      let lon = (Math.atan2(p.z, -p.x) * 180) / Math.PI - 180;
+      if (lon < -180) lon += 360;
+      return { lat, lon, d };
+    };
+
+    if (apiRef) {
+      apiRef.current = {
+        flatten: async (ms = 1300) => {
+          morphing = true;
+          controls.enabled = false;
+          controls.autoRotate = false;
+          const start = view();
+          const { lon } = start;
+          let { lat, d } = start;
+          // keep the sheet within Web-Mercator latitudes: swing the view towards the equator first
+          const target = Math.max(-68, Math.min(68, lat));
+          if (Math.abs(target - lat) > 0.5) {
+            const from = lat;
+            await animate(450, (t) => camera.position.copy(toXYZ(from + (target - from) * t, lon, d, new THREE.Vector3())));
+            lat = target;
+          }
+          setFrame(lat, lon);
+          await animate(ms, setMorph);
+          morphing = false;
+          ({ d } = view());
+          return { lat, lon, zoom: zoomFor(d, lat) };
+        },
+        showFlat: ({ lat, lon, zoom }) => {
+          const d = distanceFor(zoom, lat);
+          camera.position.copy(toXYZ(lat, lon, d, new THREE.Vector3()));
+          camera.lookAt(0, 0, 0);
+          setFrame(lat, lon);
+          setMorph(1);
+          renderer.render(scene, camera);
+        },
+        roll: async (ms = 1300) => {
+          morphing = true;
+          await animate(ms, (t) => setMorph(1 - t));
+          morphing = false;
+          controls.enabled = true;
+          lastInteraction = performance.now();
+        },
+        setActive: (on) => {
+          active = on;
+        },
+        zoomRange: (lat) => [zoomFor(MAX_DISTANCE, lat), zoomFor(MIN_DISTANCE + 0.25, lat)],
+      };
+    }
+
     let frame = 0;
     const loop = () => {
       frame = requestAnimationFrame(loop);
+      if (!active) return;
       const { autoRotate: rotate, showWind: windOn } = propsRef.current;
-      controls.autoRotate = rotate && performance.now() - lastInteraction > 4000;
-      controls.update();
-      wind.visible = windOn;
-      if (windOn) stepWind();
+      controls.autoRotate = !morphing && uniforms.uMorph.value === 0 && rotate && performance.now() - lastInteraction > 4000;
+      if (!morphing && uniforms.uMorph.value === 0) controls.update();
+      wind.visible = windOn && uniforms.uMorph.value < 0.25;
+      if (wind.visible) stepWind();
       renderer.render(scene, camera);
     };
     loop();
 
     return () => {
       cancelAnimationFrame(frame);
+      if (apiRef) apiRef.current = null;
       resize.disconnect();
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
@@ -384,7 +564,7 @@ export default function GlobeCanvas({
       mount.removeChild(renderer.domElement);
       sceneRef.current = null;
     };
-  }, []);
+  }, [apiRef]);
 
   // New data: upload every frame once as a GPU texture; animation only swaps uniforms afterwards
   useEffect(() => {

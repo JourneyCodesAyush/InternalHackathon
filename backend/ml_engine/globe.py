@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -114,8 +115,13 @@ def _paths(hours: int, res: float) -> tuple[Path, Path]:
 def _save(snap: dict, hours: int, res: float) -> None:
     data, meta = _paths(hours, res)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(data, **{k: snap[k] for k in ("no2", "age_h", "u", "v")})
-    meta.write_text(json.dumps(snap["meta"]))
+    # write to temporary files and swap them in, so a request never reads a half-written snapshot
+    tmp_data = data.with_name(data.stem + ".tmp.npz")
+    tmp_meta = meta.with_name(meta.name + ".tmp")
+    np.savez_compressed(tmp_data, **{k: snap[k] for k in ("no2", "age_h", "u", "v")})
+    tmp_meta.write_text(json.dumps(snap["meta"]))
+    os.replace(tmp_data, data)
+    os.replace(tmp_meta, meta)
 
 
 def _load(hours: int, res: float) -> tuple[dict, float] | None:
@@ -151,6 +157,37 @@ def load_demo(path: Path | None = None) -> dict | None:
     return snap
 
 
+_refreshing = threading.Event()
+
+
+def _fetch_with_timeout(hours: int, res: float, timeout_s: float = 45.0) -> dict:
+    """Earth Engine fetch that gives up after ``timeout_s`` (the thread is left to finish on its own)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(_fetch, hours, res).result(timeout=timeout_s)
+    finally:
+        pool.shutdown(wait=False)
+
+
+def _refresh_in_background(hours: int, res: float) -> None:
+    """Fetch a new snapshot without blocking requests; at most one refresh at a time."""
+    if _refreshing.is_set():
+        return
+    _refreshing.set()
+
+    def run():
+        try:
+            _save(_fetch_with_timeout(hours, res, timeout_s=120.0), hours, res)
+        except Exception:  # noqa: BLE001 - keep serving the stored snapshot
+            log.exception("Background global NO2 refresh failed")
+        finally:
+            _refreshing.clear()
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def global_no2(hours: int = 24, res: float = RES_DEG) -> dict:
     """Latest global snapshot (arrays north-up, west-to-east from 180°W). Refreshed at most every
     ``CACHE_TTL_S``; if Earth Engine fails, the last stored snapshot is returned with ``meta.stale = True``.
@@ -169,8 +206,13 @@ def global_no2(hours: int = 24, res: float = RES_DEG) -> dict:
             return demo
         if cached and time.time() - cached[1] < CACHE_TTL_S:
             return cached[0]
+        if cached:
+            # stale-while-revalidate: never make the page wait on Earth Engine when a snapshot exists
+            _refresh_in_background(hours, res)
+            cached[0]["meta"]["stale"] = True
+            return cached[0]
         try:
-            snap = _fetch(hours, res)
+            snap = _fetch_with_timeout(hours, res)
         except Exception:  # noqa: BLE001 - Earth Engine quota / outage: serve the last snapshot
             if cached is None:
                 demo = load_demo()
