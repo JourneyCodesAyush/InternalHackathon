@@ -6,6 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Position } from 'geojson';
 import { MAX_COLUMN, MIN_COLUMN, type GlobeFrames, type HoverInfo, type MapView } from './GlobeCanvas';
 import { worldCountries } from './countries';
+import type { FluxVector } from './transboundaryData';
 
 setWorkerUrl('/maplibre/maplibre-gl-worker.mjs');
 
@@ -28,6 +29,8 @@ interface FlatMapProps {
   highlightNewest: boolean;
   newestHours: number;
   showWind: boolean;
+  fluxVectors?: FluxVector[] | null;
+  showFlux?: boolean;
   onHover: (info: HoverInfo | null) => void;
   onSelect: (point: { lat: number; lon: number } | null) => void;
   outline: number[][][] | null;
@@ -132,6 +135,8 @@ export default function FlatMap({
   highlightNewest,
   newestHours,
   showWind,
+  fluxVectors,
+  showFlux,
   onHover,
   onSelect,
   outline,
@@ -142,11 +147,11 @@ export default function FlatMap({
   const mapRef = useRef<MapLibreMap | null>(null);
   const loadedRef = useRef<Promise<void> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const propsRef = useRef({ onHover, onSelect, showWind, data });
+  const propsRef = useRef({ onHover, onSelect, showWind, fluxVectors, showFlux, data });
 
   useEffect(() => {
-    propsRef.current = { onHover, onSelect, showWind, data };
-  }, [onHover, onSelect, showWind, data]);
+    propsRef.current = { onHover, onSelect, showWind, fluxVectors, showFlux, data };
+  }, [onHover, onSelect, showWind, fluxVectors, showFlux, data]);
 
   // Map setup (once)
   useEffect(() => {
@@ -301,6 +306,60 @@ export default function FlatMap({
       }
       wctx.strokeStyle = 'rgba(205,225,255,0.55)';
       wctx.stroke();
+
+      // Render transboundary atmospheric flux vectors across borders
+      const { fluxVectors, showFlux } = propsRef.current;
+      if (showFlux && fluxVectors && fluxVectors.length > 0) {
+        wctx.save();
+        for (const vec of fluxVectors) {
+          const a = map.project(vec.start);
+          const b = map.project(vec.end);
+          if (!Number.isFinite(a.x) || !Number.isFinite(b.x)) continue;
+
+          let stroke = '#38bdf8';
+          if (vec.intensity === 'severe') stroke = '#f43f5e';
+          else if (vec.intensity === 'high') stroke = '#fb923c';
+          else if (vec.intensity === 'low') stroke = '#34d399';
+
+          wctx.shadowColor = stroke;
+          wctx.shadowBlur = 10;
+          wctx.strokeStyle = stroke;
+          wctx.lineWidth = 3.5;
+
+          // Main vector shaft
+          wctx.beginPath();
+          wctx.moveTo(a.x, a.y);
+          wctx.lineTo(b.x, b.y);
+          wctx.stroke();
+
+          // Arrowhead
+          const angle = Math.atan2(b.y - a.y, b.x - a.x);
+          const headLen = 10;
+          wctx.fillStyle = stroke;
+          wctx.beginPath();
+          wctx.moveTo(b.x, b.y);
+          wctx.lineTo(b.x - headLen * Math.cos(angle - Math.PI / 6), b.y - headLen * Math.sin(angle - Math.PI / 6));
+          wctx.lineTo(b.x - headLen * Math.cos(angle + Math.PI / 6), b.y - headLen * Math.sin(angle + Math.PI / 6));
+          wctx.closePath();
+          wctx.fill();
+
+          // Badge label with flux rate
+          const midX = (a.x + b.x) / 2;
+          const midY = (a.y + b.y) / 2;
+          const text = `${vec.flux_tonnes_day > 0 ? '+' : ''}${vec.flux_tonnes_day} t/d`;
+          wctx.font = 'bold 10px monospace';
+          const tw = wctx.measureText(text).width;
+          wctx.fillStyle = 'rgba(10, 15, 26, 0.85)';
+          wctx.shadowBlur = 0;
+          wctx.fillRect(midX - tw / 2 - 4, midY - 7, tw + 8, 14);
+          wctx.strokeStyle = stroke;
+          wctx.lineWidth = 1;
+          wctx.strokeRect(midX - tw / 2 - 4, midY - 7, tw + 8, 14);
+          wctx.fillStyle = '#ffffff';
+          wctx.fillText(text, midX - tw / 2, midY + 4);
+        }
+        wctx.restore();
+      }
     };
     step();
 

@@ -4,6 +4,7 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { drawBaseMap } from './globeData';
+import type { FluxVector } from './transboundaryData';
 
 // Colour scale (log) in µmol/m²: clean background (~3-8) stays transparent, large polluted cities saturate.
 // 1 µmol/m² = 6.02e13 molecules/cm², so 8 ≈ 5e14 and 160 ≈ 1e16 molecules/cm².
@@ -34,6 +35,8 @@ interface GlobeCanvasProps {
   newestHours: number;
   autoRotate: boolean;
   showWind: boolean;
+  fluxVectors?: FluxVector[] | null;
+  showFlux?: boolean;
   onHover: (info: HoverInfo | null) => void;
   /** A tap (not a drag) on the globe, or null for a tap on empty space. */
   onSelect: (point: { lat: number; lon: number } | null) => void;
@@ -61,6 +64,8 @@ export interface GlobeApi {
   setActive: (active: boolean) => void;
   /** Globe distance limits expressed as MapLibre zooms at ``lat`` (for easing the 2-D map before rolling up). */
   zoomRange: (lat: number) => [number, number];
+  /** Smoothly focus camera on specific coordinates */
+  focus?: (lat: number, lon: number, distance?: number) => void;
 }
 
 const FOV = 40;
@@ -218,6 +223,8 @@ export default function GlobeCanvas({
   newestHours,
   autoRotate,
   showWind,
+  fluxVectors,
+  showFlux,
   onHover,
   onSelect,
   outline,
@@ -231,14 +238,15 @@ export default function GlobeCanvas({
     ageTexture: THREE.DataTexture | null;
     wind: THREE.LineSegments;
     highlight: THREE.LineSegments;
+    fluxLines: THREE.LineSegments;
     windState: { lat: Float32Array; lon: Float32Array; life: Float32Array } | null;
     field: GlobeFrames | null;
   } | null>(null);
-  const propsRef = useRef({ autoRotate, showWind, onHover, onSelect });
+  const propsRef = useRef({ autoRotate, showWind, fluxVectors, showFlux, onHover, onSelect });
 
   useEffect(() => {
-    propsRef.current = { autoRotate, showWind, onHover, onSelect };
-  }, [autoRotate, showWind, onHover, onSelect]);
+    propsRef.current = { autoRotate, showWind, fluxVectors, showFlux, onHover, onSelect };
+  }, [autoRotate, showWind, fluxVectors, showFlux, onHover, onSelect]);
 
   // Scene setup (once)
   useEffect(() => {
@@ -321,6 +329,14 @@ export default function GlobeCanvas({
     highlight.frustumCulled = false;
     scene.add(highlight);
 
+    // Transboundary atmospheric NO2 flux vectors
+    const fluxLines = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false }),
+    );
+    fluxLines.frustumCulled = false;
+    scene.add(fluxLines);
+
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
@@ -334,7 +350,7 @@ export default function GlobeCanvas({
     controls.addEventListener('start', () => (lastInteraction = performance.now()));
     controls.addEventListener('end', () => (lastInteraction = performance.now()));
 
-    sceneRef.current = { material, controls, textures: [], ageTexture: null, wind, highlight, windState: null, field: null };
+    sceneRef.current = { material, controls, textures: [], ageTexture: null, wind, highlight, fluxLines, windState: null, field: null };
 
     // Hover picking: ray -> sphere UV -> lat/lon
     const raycaster = new THREE.Raycaster();
@@ -524,6 +540,13 @@ export default function GlobeCanvas({
           active = on;
         },
         zoomRange: (lat) => [zoomFor(MAX_DISTANCE, lat), zoomFor(MIN_DISTANCE + 0.25, lat)],
+        focus: (lat, lon, distance = 2.4) => {
+          const target = toXYZ(lat, lon, distance, new THREE.Vector3());
+          camera.position.copy(target);
+          controls.target.set(0, 0, 0);
+          controls.update();
+          lastInteraction = performance.now();
+        },
       };
     }
 
@@ -610,6 +633,62 @@ export default function GlobeCanvas({
     s.highlight.geometry = new THREE.BufferGeometry();
     s.highlight.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   }, [outline]);
+
+  // Transboundary atmospheric NO2 flux vectors: 3D lines with directional arrowheads
+  useEffect(() => {
+    const s = sceneRef.current;
+    if (!s) return;
+    if (!showFlux || !fluxVectors || fluxVectors.length === 0) {
+      s.fluxLines.visible = false;
+      return;
+    }
+    s.fluxLines.visible = true;
+    const positions: number[] = [];
+    const colors: number[] = [];
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const wing1 = new THREE.Vector3();
+    const wing2 = new THREE.Vector3();
+
+    for (const vec of fluxVectors) {
+      const [lon0, lat0] = vec.start;
+      const [lon1, lat1] = vec.end;
+      toXYZ(lat0, lon0, 1.008, a);
+      toXYZ(lat1, lon1, 1.008, b);
+
+      // Main shaft line
+      positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+
+      // Arrowhead wings
+      const dir = new THREE.Vector3().subVectors(b, a).normalize();
+      const norm = new THREE.Vector3().crossVectors(dir, b).normalize();
+      const wingLen = 0.022;
+      wing1.copy(b).sub(dir.clone().multiplyScalar(wingLen)).add(norm.clone().multiplyScalar(wingLen * 0.5));
+      wing2.copy(b).sub(dir.clone().multiplyScalar(wingLen)).sub(norm.clone().multiplyScalar(wingLen * 0.5));
+
+      positions.push(b.x, b.y, b.z, wing1.x, wing1.y, wing1.z);
+      positions.push(b.x, b.y, b.z, wing2.x, wing2.y, wing2.z);
+
+      let r = 0.22, g = 0.74, bl = 0.97; // sky
+      if (vec.intensity === 'severe') {
+        r = 0.96; g = 0.25; bl = 0.37; // rose
+      } else if (vec.intensity === 'high') {
+        r = 0.98; g = 0.57; bl = 0.24; // amber
+      } else if (vec.intensity === 'low') {
+        r = 0.2; g = 0.83; bl = 0.6; // emerald
+      }
+
+      // 3 line segments = 6 vertices
+      for (let k = 0; k < 6; k++) {
+        colors.push(r, g, bl);
+      }
+    }
+
+    s.fluxLines.geometry.dispose();
+    s.fluxLines.geometry = new THREE.BufferGeometry();
+    s.fluxLines.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    s.fluxLines.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  }, [fluxVectors, showFlux]);
 
   // Animation state -> uniforms
   useEffect(() => {

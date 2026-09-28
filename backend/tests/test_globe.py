@@ -51,3 +51,28 @@ async def test_global_no2_unavailable(auth_client):
 async def test_global_no2_unauthenticated(client):
     response = await client.get("/api/v1/globe/no2")
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_transboundary_flux_endpoint(auth_client):
+    from ml_engine.globe import load_demo
+
+    demo = load_demo()
+    assert demo is not None
+    with patch("app.services.globe_service.global_no2", return_value=demo):
+        response = await auth_client.get("/api/v1/globe/transboundary-flux?region=delhi")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "ready"
+    assert "delhi_summary" in data
+    assert "Delhi's NO₂ today arrived from outside the city" in data["delhi_summary"]["headline"]
+    assert "vectors" in data and len(data["vectors"]) >= 5
+    assert "punjab_international" in data
+    assert "legal_evidence_brief" in data
+
+
+@pytest.mark.asyncio
+async def test_transboundary_flux_unauthenticated(client):
+    response = await client.get("/api/v1/globe/transboundary-flux")
+    assert response.status_code == 401
+

@@ -3,13 +3,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { Globe2, Map as MapIcon, Loader2, X, Info, Pause, Play, RefreshCw, AlertTriangle, Wind, RotateCw, Satellite } from 'lucide-react';
+import { Globe2, Map as MapIcon, Loader2, X, Info, Pause, Play, RefreshCw, AlertTriangle, Wind, RotateCw, Satellite, ShieldAlert, Gavel } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import { MAX_COLUMN, MIN_COLUMN, type GlobeApi, type GlobeFrames, type HoverInfo } from '../components/globe/GlobeCanvas';
 import type { FlatMapApi } from '../components/globe/FlatMap';
 import { fetchGlobalSnapshot, hoursAgo, syntheticSnapshot, type GlobalSnapshot } from '../components/globe/globeData';
 import { explainRegion } from '../components/globe/regionInsights';
 import type { FlowRequest, FlowResult, FlowProgress } from '../components/globe/globeFlow.worker';
+import TransboundaryPanel from '../components/globe/TransboundaryPanel';
+import { fetchTransboundaryFlux, type TransboundaryResponse } from '../components/globe/transboundaryData';
 
 // WebGL needs the browser: render the canvas on the client only
 const GlobeCanvas = dynamic(() => import('../components/globe/GlobeCanvas'), { ssr: false });
@@ -73,6 +75,17 @@ export default function GlobePage() {
   const [transitioning, setTransitioning] = useState(false);
   const [flatMounted, setFlatMounted] = useState(false);
   const [flatVisible, setFlatVisible] = useState(false);
+  const [showTransboundary, setShowTransboundary] = useState(false);
+  const [transboundaryData, setTransboundaryData] = useState<TransboundaryResponse | null>(null);
+  const [transboundaryLoading, setTransboundaryLoading] = useState(false);
+
+  const handleFocusRegion = useCallback((lat: number, lon: number, zoom = 8) => {
+    if (mode === '2d') {
+      flatApi.current?.easeTo({ lat, lon, zoom }, 900);
+    } else {
+      globeApi.current?.focus?.(lat, lon, 2.2);
+    }
+  }, [mode]);
 
   /**
    * 3-D -> 2-D: the sphere unrolls into a Web-Mercator sheet around the current view, then the MapLibre map
@@ -186,6 +199,26 @@ export default function GlobePage() {
     };
   }, [load]);
 
+  // Transboundary atmospheric flux computation / fetch
+  useEffect(() => {
+    if (!snapshot) return;
+    let active = true;
+    setTransboundaryLoading(true);
+    fetchTransboundaryFlux(24, 'delhi', undefined, snapshot)
+      .then((data) => {
+        if (active) {
+          setTransboundaryData(data);
+          setTransboundaryLoading(false);
+        }
+      })
+      .catch(() => {
+        if (active) setTransboundaryLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [snapshot]);
+
   // Drift playback: advance the fractional frame index; loop after +12 h
   useEffect(() => {
     if (!playing) return;
@@ -257,6 +290,8 @@ export default function GlobePage() {
           newestHours={NEWEST_HOURS}
           autoRotate={autoRotate && !hover && !selected && mode === '3d' && !transitioning}
           showWind={showWind}
+          fluxVectors={showTransboundary ? transboundaryData?.vectors : null}
+          showFlux={showTransboundary}
           onHover={onHover}
           onSelect={onSelect}
           outline={insight?.outline ?? null}
@@ -277,12 +312,46 @@ export default function GlobePage() {
               highlightNewest={highlightNewest}
               newestHours={NEWEST_HOURS}
               showWind={showWind && flatVisible}
+              fluxVectors={showTransboundary ? transboundaryData?.vectors : null}
+              showFlux={showTransboundary}
               onHover={onHover}
               onSelect={onSelect}
               outline={insight?.outline ?? null}
               apiRef={flatApi}
             />
           </div>
+        )}
+
+        {/* Top-Right: Transboundary Airshed Attribution Button */}
+        <div className="absolute top-3 right-3 sm:top-4 sm:right-4 z-20 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowTransboundary((prev) => !prev)}
+            aria-pressed={showTransboundary}
+            className={`flex items-center gap-1.5 h-8 px-3 rounded-full text-[11px] font-semibold transition-all border shadow-xl cursor-pointer backdrop-blur-md ${
+              showTransboundary
+                ? 'bg-sky-500/25 border-sky-400 text-sky-200 ring-2 ring-sky-500/40 shadow-sky-500/10'
+                : 'bg-[#11141d]/90 border-[#2e3547] text-zinc-300 hover:border-sky-500/50 hover:text-white'
+            }`}
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-sky-400" />
+            <span>Transboundary Flux</span>
+            {transboundaryData?.delhi_summary && (
+              <span className="px-1.5 py-0.5 rounded-full bg-sky-500/30 text-sky-200 font-mono text-[10px]">
+                {transboundaryData.delhi_summary.external_attribution_pct}% Ext
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* CAQM Transboundary Attribution Panel */}
+        {showTransboundary && (
+          <TransboundaryPanel
+            data={transboundaryData}
+            loading={transboundaryLoading}
+            onClose={() => setShowTransboundary(false)}
+            onFocusRegion={handleFocusRegion}
+          />
         )}
 
         {/* 3-D globe <-> 2-D map */}
