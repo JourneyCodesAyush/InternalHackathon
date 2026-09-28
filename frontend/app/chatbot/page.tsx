@@ -27,6 +27,12 @@ export interface ChatMessage {
   }>;
   status?: string;
   isLoading?: boolean;
+  // Multi-agent extensions
+  missionCards?: Array<Record<string, any>>;
+  missionBrief?: Record<string, any>;
+  activeSpecialists?: string[];
+  autonomousTriggers?: string[];
+  riskLevel?: string | null;
 }
 
 export interface FormData {
@@ -120,6 +126,11 @@ export default function ChatbotPage() {
           executedTools: data.executed_tools,
           artifacts: data.artifacts,
           status: data.status,
+          missionCards: data.mission_cards,
+          missionBrief: data.mission_brief,
+          activeSpecialists: data.active_specialists,
+          autonomousTriggers: data.autonomous_triggers,
+          riskLevel: data.risk_level,
         };
 
         setMessages((prev) =>
@@ -214,6 +225,11 @@ export default function ChatbotPage() {
           executedTools: data.executed_tools,
           artifacts: data.artifacts,
           status: data.status,
+          missionCards: data.mission_cards,
+          missionBrief: data.mission_brief,
+          activeSpecialists: data.active_specialists,
+          autonomousTriggers: data.autonomous_triggers,
+          riskLevel: data.risk_level,
         };
 
         setMessages((prev) =>

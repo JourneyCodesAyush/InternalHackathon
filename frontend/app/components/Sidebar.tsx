@@ -17,6 +17,7 @@ import {
   Grid3x3,
   Satellite,
   Navigation,
+  Bot,
 } from 'lucide-react';
 import HazardLegend from './HazardLegend';
 import { PRESET_REGIONS } from '@/lib/constants';
@@ -129,6 +130,17 @@ export default function Sidebar({
         >
           <Navigation className="w-4 h-4" />
           Pi Drone Portal
+        </Link>
+        <Link
+          href="/chatbot"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium transition-colors ${
+            pathname === '/chatbot'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1b202e]'
+          }`}
+        >
+          <Bot className="w-4 h-4" />
+          AI Chatbot Portal
         </Link>
       </nav>
 

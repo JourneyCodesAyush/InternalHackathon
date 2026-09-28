@@ -1,7 +1,74 @@
-export const GOOGLE_MAPS_API_KEY =
-  process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+export const STORAGE_KEY_MAPS_KEY = 'aeroscale_google_maps_key';
+export const STORAGE_KEY_MAPS_POOL = 'aeroscale_google_maps_pool';
+export const STORAGE_KEY_AUTO_CYCLE = 'aeroscale_google_maps_autocycle';
+
+export function getActiveGoogleMapsApiKey(): string {
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY_MAPS_KEY);
+      if (stored && stored.trim().length > 0) {
+        return stored.trim();
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || '';
+}
+
+export function getKeyPool(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_MAPS_POOL);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((k: any) => typeof k === 'string' && k.trim().length > 0) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setKeyPool(keys: string[]) {
+  if (typeof window === 'undefined') return;
+  const cleaned = keys.map(k => k.trim()).filter(k => k.length > 0);
+  localStorage.setItem(STORAGE_KEY_MAPS_POOL, JSON.stringify(cleaned));
+  window.dispatchEvent(new CustomEvent('aeroscale:maps_pool_updated', { detail: { pool: cleaned } }));
+}
+
+export function setActiveKey(key: string) {
+  if (typeof window === 'undefined') return;
+  const trimmed = key.trim();
+  localStorage.setItem(STORAGE_KEY_MAPS_KEY, trimmed);
+  window.dispatchEvent(new CustomEvent('aeroscale:maps_key_changed', { detail: { key: trimmed } }));
+}
+
+export function cycleToNextKey(): { nextKey: string | null; index: number; total: number } {
+  if (typeof window === 'undefined') return { nextKey: null, index: -1, total: 0 };
+  const pool = getKeyPool();
+  if (pool.length === 0) return { nextKey: null, index: -1, total: 0 };
+  
+  const current = getActiveGoogleMapsApiKey();
+  const currentIndex = pool.findIndex(k => k === current);
+  const nextIndex = (currentIndex + 1) % pool.length;
+  const nextKey = pool[nextIndex];
+  
+  setActiveKey(nextKey);
+  return { nextKey, index: nextIndex, total: pool.length };
+}
+
+export const GOOGLE_MAPS_API_KEY = getActiveGoogleMapsApiKey();
 
 let googleMapsPromise: Promise<any> | null = null;
+
+export function resetGoogleMapsSdk() {
+  googleMapsPromise = null;
+  if (typeof document !== 'undefined') {
+    const existing = document.querySelector('script[data-google-maps-script="true"]');
+    if (existing && existing.parentNode) {
+      existing.parentNode.removeChild(existing);
+    }
+  }
+}
 
 export function loadGoogleMaps(): Promise<any> {
   if (typeof window === 'undefined') {
@@ -18,6 +85,8 @@ export function loadGoogleMaps(): Promise<any> {
     return googleMapsPromise;
   }
 
+  const activeKey = getActiveGoogleMapsApiKey();
+
   googleMapsPromise = new Promise((resolve, reject) => {
     // Check if script element already exists in document
     const existingScript = document.querySelector('script[data-google-maps-script="true"]');
@@ -31,9 +100,29 @@ export function loadGoogleMaps(): Promise<any> {
       return;
     }
 
+    // Global Google Maps Auth Failure hook
+    (window as any).gm_authFailure = () => {
+      console.warn('[GoogleMaps] Authentication failed for key:', activeKey ? `${activeKey.slice(0, 8)}...` : '(none)');
+      window.dispatchEvent(new CustomEvent('aeroscale:maps_auth_failure', { detail: { key: activeKey } }));
+      
+      const autoCycle = localStorage.getItem(STORAGE_KEY_AUTO_CYCLE) === 'true';
+      if (autoCycle) {
+        const pool = getKeyPool();
+        if (pool.length > 1) {
+          const res = cycleToNextKey();
+          if (res.nextKey && res.nextKey !== activeKey) {
+            console.log('[GoogleMaps] Auto-cycling to next key:', `${res.nextKey.slice(0, 8)}...`);
+            setTimeout(() => {
+              window.location.reload();
+            }, 600);
+          }
+        }
+      }
+    };
+
     const script = document.createElement('script');
     script.setAttribute('data-google-maps-script', 'true');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places,geometry`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(activeKey)}&libraries=places,geometry`;
     script.async = true;
     script.defer = true;
 
@@ -47,6 +136,7 @@ export function loadGoogleMaps(): Promise<any> {
 
     script.onerror = (error) => {
       googleMapsPromise = null;
+      window.dispatchEvent(new CustomEvent('aeroscale:maps_auth_failure', { detail: { key: activeKey } }));
       reject(new Error(`Failed to load Google Maps SDK: ${error}`));
     };
 

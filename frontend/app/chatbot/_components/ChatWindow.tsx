@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Send, FileText, Upload, Paperclip } from 'lucide-react';
+import { Send, FileText, Upload, Paperclip, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import type { ChatMessage } from '../page';
 import MessageBubble from './MessageBubble';
+import { PRESET_QUERIES } from './SuggestedPrompts';
 
 interface ChatWindowProps {
   messages: ChatMessage[];
@@ -25,6 +26,7 @@ export default function ChatWindow({
   onLoadServerForm,
 }: ChatWindowProps) {
   const [input, setInput] = useState('');
+  const [showPresetQuestions, setShowPresetQuestions] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,6 +87,30 @@ export default function ChatWindow({
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Preset Questions Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setShowPresetQuestions((prev) => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all shadow-sm ${
+              showPresetQuestions
+                ? 'bg-blue-600 text-white border border-blue-500 shadow-blue-500/25 ring-1 ring-blue-400/40'
+                : 'bg-[#181d2a] hover:bg-[#202738] border border-[#2e3547] hover:border-blue-500/50 text-zinc-200 hover:text-white'
+            }`}
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${showPresetQuestions ? 'text-amber-300' : 'text-amber-400'}`} />
+            <span>Preset Questions</span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+              showPresetQuestions ? 'bg-blue-700 text-blue-100' : 'bg-[#222838] text-zinc-400'
+            }`}>
+              {PRESET_QUERIES.length}
+            </span>
+            {showPresetQuestions ? (
+              <ChevronUp className="w-3.5 h-3.5 text-blue-200" />
+            ) : (
+              <ChevronDown className="w-3.5 h-3.5 text-zinc-400" />
+            )}
+          </button>
+
           {onLoadServerForm && (
             <button
               onClick={onLoadServerForm}
@@ -117,6 +143,45 @@ export default function ChatWindow({
           )}
         </div>
       </div>
+
+      {/* Preset Questions Collapsible Card */}
+      {showPresetQuestions && (
+        <div className="shrink-0 p-3 bg-[#111520] border-b border-[#242938] shadow-xl animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-semibold text-zinc-200 uppercase tracking-wider flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+              Preset Intelligence Inquiries
+            </span>
+            <span className="text-[10px] text-zinc-500">Select to send immediately</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+            {PRESET_QUERIES.map((q) => (
+              <button
+                key={q.id}
+                type="button"
+                onClick={() => {
+                  setShowPresetQuestions(false);
+                  onSendMessage(q.query);
+                }}
+                disabled={isLoading}
+                className="flex items-start gap-2 p-2 rounded-lg bg-[#161b29] hover:bg-[#1e2538] border border-[#272f44] hover:border-blue-500/50 text-left transition-all cursor-pointer group shadow-sm disabled:opacity-50"
+              >
+                <div className="p-1 rounded bg-blue-600/15 border border-blue-500/20 text-blue-400 group-hover:bg-blue-600/30 group-hover:text-blue-300 shrink-0 mt-0.5">
+                  {q.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-xs text-zinc-200 group-hover:text-white truncate">
+                    {q.label}
+                  </div>
+                  <div className="text-[10px] text-zinc-400 truncate mt-0.5">
+                    {q.query}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Messages area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-1">

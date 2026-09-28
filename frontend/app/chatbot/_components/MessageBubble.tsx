@@ -4,6 +4,7 @@ import React from 'react';
 import { Bot, User, MapPin, BarChart3, FileText, Search, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import type { ChatMessage } from '../page';
 import AnalysisCard from './AnalysisCard';
+import MissionCards from './MissionCards';
 
 const TOOL_ICONS: Record<string, React.ReactNode> = {
   downscale: <MapPin className="w-3 h-3" />,
@@ -123,6 +124,16 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
             dangerouslySetInnerHTML={{ __html: renderMarkdown(message.content) }}
           />
         </div>
+
+        {/* Multi-agent Mission Cards */}
+        {message.missionCards && message.missionCards.length > 0 && (
+          <MissionCards
+            cards={message.missionCards}
+            riskLevel={message.riskLevel}
+            activeSpecialists={message.activeSpecialists}
+            autonomousTriggers={message.autonomousTriggers}
+          />
+        )}
 
         {/* Analysis & PDF Report Card */}
         {(() => {

@@ -23,6 +23,9 @@ import {
   TrendingDown,
   Users,
   Plane,
+  ChevronDown,
+  ChevronUp,
+  HelpCircle,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -690,6 +693,7 @@ The analysis runs automatically with your first question.`,
   ]);
   const [isTyping, setIsTyping] = useState<boolean>(false);
   const [chatInput, setChatInput] = useState<string>('');
+  const [showPresetQuestions, setShowPresetQuestions] = useState<boolean>(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Close on Escape key if used as a modal
@@ -1158,30 +1162,80 @@ The analysis runs automatically with your first question.`,
       {/* Tab 1: AI Chat Assistant */}
       {activeTab === 'chat' && (
         <div className="flex-1 flex flex-col min-h-0 bg-[#0d1017] rounded-lg border border-[#242938] overflow-hidden">
-          {/* Predefined Clickable Questions Chips */}
-          <div className="p-2.5 bg-[#121622] border-b border-[#1e2333] shrink-0 space-y-1.5">
-            <div className="flex items-center justify-between text-[10px] text-zinc-400">
-              <span className="font-semibold uppercase tracking-wider flex items-center gap-1 text-zinc-300">
-                <Sparkles className="w-3 h-3 text-amber-400" />
-                Ask the agent (answers from the AI model&apos;s analysis)
+          {/* Header bar with Preset Questions Button & Status */}
+          <div className="px-3 py-2 bg-[#121622] border-b border-[#1e2333] shrink-0 flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setShowPresetQuestions((prev) => !prev)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all cursor-pointer shadow-sm select-none ${
+                showPresetQuestions
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-blue-500/25 ring-1 ring-blue-400/40'
+                  : 'bg-[#181d2a] hover:bg-[#202738] border-[#2e3547] hover:border-blue-500/50 text-zinc-200 hover:text-white'
+              }`}
+            >
+              <Sparkles className={`w-3.5 h-3.5 ${showPresetQuestions ? 'text-amber-300' : 'text-amber-400'}`} />
+              <span>Preset Questions</span>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-semibold ${
+                showPresetQuestions ? 'bg-blue-700/80 text-blue-100' : 'bg-[#222838] text-zinc-400'
+              }`}>
+                {PREDEFINED_QUESTIONS.length}
               </span>
-              <span className="text-zinc-500">{PREDEFINED_QUESTIONS.length} questions</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {PREDEFINED_QUESTIONS.map((q) => (
-                <button
-                  key={q.id}
-                  type="button"
-                  onClick={() => handleAskQuestion(q)}
-                  disabled={isTyping}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#181d2a] hover:bg-blue-600/20 border border-[#2e3547] hover:border-blue-500/50 text-[11px] text-zinc-300 hover:text-blue-200 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed group"
-                >
-                  <q.icon className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
-                  <span className="font-medium">{q.label}</span>
-                </button>
-              ))}
+              {showPresetQuestions ? (
+                <ChevronUp className="w-3.5 h-3.5 ml-0.5 text-blue-200" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 ml-0.5 text-zinc-400" />
+              )}
+            </button>
+
+            <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+              <span className="hidden sm:inline text-zinc-400 font-medium">Model Analysis:</span>
+              <span className="flex items-center gap-1 font-mono text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Live Ingest
+              </span>
             </div>
           </div>
+
+          {/* Collapsible Structured Preset Questions Card */}
+          {showPresetQuestions && (
+            <div className="p-3 bg-[#111520] border-b border-[#242938] shrink-0 shadow-lg animate-in fade-in slide-in-from-top-2 duration-150">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5">
+                  <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="text-[11px] font-semibold text-zinc-200 uppercase tracking-wider">
+                    Select a Preset Intelligence Inquiry
+                  </span>
+                </div>
+                <span className="text-[10px] text-zinc-400">Clicking runs instant verification</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {PREDEFINED_QUESTIONS.map((q) => (
+                  <button
+                    key={q.id}
+                    type="button"
+                    onClick={() => {
+                      setShowPresetQuestions(false);
+                      handleAskQuestion(q);
+                    }}
+                    disabled={isTyping}
+                    className="flex items-start gap-2.5 p-2 rounded-lg bg-[#161b29] hover:bg-[#1e2538] border border-[#272f44] hover:border-blue-500/50 text-left transition-all cursor-pointer shadow-sm group disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <div className="p-1.5 rounded-md bg-blue-600/15 border border-blue-500/20 text-blue-400 group-hover:bg-blue-600/30 group-hover:text-blue-300 group-hover:scale-105 shrink-0 transition-all">
+                      <q.icon className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-xs text-zinc-200 group-hover:text-white transition-colors truncate">
+                        {q.label}
+                      </div>
+                      <div className="text-[10px] text-zinc-400 line-clamp-1 group-hover:text-zinc-300 mt-0.5">
+                        {q.query}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Scrollable Chat Stream */}
           <div className="flex-1 overflow-y-auto p-3.5 space-y-3.5">

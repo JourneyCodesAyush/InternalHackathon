@@ -43,6 +43,12 @@ class ChatResponse(BaseModel):
     intent: str | None = None
     missing_fields: list[str] = []
     follow_up_question: str | None = None
+    # Multi-agent extensions
+    mission_cards: list[dict[str, Any]] = []
+    mission_brief: dict[str, Any] | None = None
+    active_specialists: list[str] = []
+    autonomous_triggers: list[str] = []
+    risk_level: str | None = None
 
 
 # ── Chat endpoint ─────────────────────────────────────────────────────────────
@@ -89,6 +95,11 @@ async def agent_chat(
         intent=result.get("intent"),
         missing_fields=result.get("missing_fields", []),
         follow_up_question=result.get("follow_up_question"),
+        mission_cards=result.get("mission_cards", []),
+        mission_brief=result.get("mission_brief"),
+        active_specialists=result.get("active_specialists", []),
+        autonomous_triggers=result.get("autonomous_triggers", []),
+        risk_level=(result.get("mission_brief") or {}).get("risk_level"),
     )
 
 
@@ -178,6 +189,11 @@ async def upload_docx_form(
         intent=result.get("intent"),
         missing_fields=result.get("missing_fields", []),
         follow_up_question=result.get("follow_up_question"),
+        mission_cards=result.get("mission_cards", []),
+        mission_brief=result.get("mission_brief"),
+        active_specialists=result.get("active_specialists", []),
+        autonomous_triggers=result.get("autonomous_triggers", []),
+        risk_level=(result.get("mission_brief") or {}).get("risk_level"),
     )
 
 
@@ -253,4 +269,9 @@ async def load_server_form(
         intent=result.get("intent"),
         missing_fields=result.get("missing_fields", []),
         follow_up_question=result.get("follow_up_question"),
+        mission_cards=result.get("mission_cards", []),
+        mission_brief=result.get("mission_brief"),
+        active_specialists=result.get("active_specialists", []),
+        autonomous_triggers=result.get("autonomous_triggers", []),
+        risk_level=(result.get("mission_brief") or {}).get("risk_level"),
     )
