@@ -14,6 +14,8 @@ import {
   X,
   Activity,
   Bot,
+  Sliders,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
@@ -92,7 +94,7 @@ export default function Navbar() {
             }`}
           >
             <MapIcon className="w-3.5 h-3.5" />
-            Geospatial Map
+            Home
           </Link>
 
           <Link
@@ -104,7 +106,7 @@ export default function Navbar() {
             }`}
           >
             <UploadCloud className="w-3.5 h-3.5" />
-            Model Upload & Clean
+            Upload
           </Link>
 
           <Link
@@ -116,7 +118,31 @@ export default function Navbar() {
             }`}
           >
             <Activity className="w-3.5 h-3.5" />
-            Plume Flow (Physics)
+            Forecast
+          </Link>
+
+          <Link
+            href="/simulator"
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              pathname === '/simulator'
+                ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1b202e]'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            What-If Simulator
+          </Link>
+
+          <Link
+            href="/reports"
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              pathname === '/reports'
+                ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1b202e]'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Reports
           </Link>
 
           <Link
@@ -288,7 +314,7 @@ export default function Navbar() {
               }`}
             >
               <MapIcon className="w-4 h-4 text-blue-400" />
-              Geospatial Map
+              Home
             </Link>
 
             <Link
@@ -301,7 +327,7 @@ export default function Navbar() {
               }`}
             >
               <UploadCloud className="w-4 h-4 text-blue-400" />
-              Model Upload & Clean
+              Upload
             </Link>
 
             <Link
@@ -314,7 +340,33 @@ export default function Navbar() {
               }`}
             >
               <Activity className="w-4 h-4 text-blue-400" />
-              Plume Flow (Physics)
+              Forecast
+            </Link>
+
+            <Link
+              href="/simulator"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium ${
+                pathname === '/simulator'
+                  ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40'
+                  : 'text-zinc-300 hover:bg-[#1b202e]'
+              }`}
+            >
+              <Sliders className="w-4 h-4 text-blue-400" />
+              What-If Simulator
+            </Link>
+
+            <Link
+              href="/reports"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium ${
+                pathname === '/reports'
+                  ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40'
+                  : 'text-zinc-300 hover:bg-[#1b202e]'
+              }`}
+            >
+              <FileText className="w-4 h-4 text-blue-400" />
+              Reports
             </Link>
 
             <Link

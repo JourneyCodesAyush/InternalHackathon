@@ -1,15 +1,7 @@
-"""Stage 2 - fine spatial downscaling (~3.9 km -> ~270 m) of gap-filled S5P NO2.
+"""Downscaling package exports.
 
-Method (scale-invariant regression + mass-conserving residual correction):
-1. Aggregate fine covariates (DEM elevation/slope, NDVI, built-up fraction, road density) to the
-   coarse satellite grid and pair them with meteorology (ERA5 wind, pressure, temperature, BLH),
-   seasonality and regional NO2 context. Train an XGBoost regressor coarse-covariates -> coarse column.
-2. Apply the trained relationship at the fine grid using the native-resolution covariates, which
-   injects sub-pixel structure (roads, built-up land, terrain) the satellite cannot resolve.
-3. Iterative back-projection: the fine field is corrected so its block means reproduce the observed
-   coarse column exactly, keeping the product faithful to the satellite measurement.
-4. The downscaled column is converted to ground-level concentration (ug/m^3) by distributing it through
-   the boundary layer; the station-trained surface model (surface.py) then maps it to ground level.
+Maintains complete backward compatibility with NO2Downscaler, FeatureBuilder,
+column_to_surface while adding EnsembleDownscaler.
 """
 
 from __future__ import annotations
@@ -24,32 +16,29 @@ import pandas as pd
 import xarray as xr
 import xgboost as xgb
 
-from .config import NO2_MOLAR_MASS_G, DownscaleConfig
-from .grid import block_mean, nan_neighbourhood_mean, upsample_bilinear
+from ..config import NO2_MOLAR_MASS_G, DownscaleConfig
+from ..grid import block_mean, nan_neighbourhood_mean, upsample_bilinear
 
 log = logging.getLogger(__name__)
 
 MET_FEATURES = ("u10", "v10", "wind_speed", "blh", "sp", "t2m")
 CONTEXT_FEATURES = ("no2_ring", "no2_day_mean", "doy_sin", "doy_cos")
-STATIC_CANDIDATES = ("elevation", "slope", "ndvi", "built_up", "road_density", "night_lights", "ghsl_built",
-                     "population", "power_plants")
+STATIC_CANDIDATES = (
+    "elevation", "slope", "ndvi", "built_up", "road_density",
+    "night_lights", "ghsl_built", "population", "power_plants"
+)
 
 MODEL_FILE = "xgb_downscaler.json"
 META_FILE = "metadata.json"
 
 
 def column_to_surface(column_umol_m2: np.ndarray, blh_m: np.ndarray) -> np.ndarray:
-    """Tropospheric column (umol/m^2) -> boundary-layer mean concentration (ug/m^3).
-
-    Assumes the tropospheric NO2 burden is well mixed within the planetary boundary layer:
-    C = column[mol/m^2] * M[g/mol] * 1e6[ug/g] / BLH[m]. The station-trained surface model then absorbs the
-    near-surface profile shape factor and regional background.
-    """
+    """Tropospheric column (umol/m^2) -> boundary-layer mean concentration (ug/m^3)."""
     return column_umol_m2 * 1e-6 * NO2_MOLAR_MASS_G * 1e6 / np.clip(blh_m, 50.0, None)
 
 
 class FeatureBuilder:
-    """Builds identical feature sets at the coarse (training) and fine (inference) scales."""
+    """Builds identical feature sets at coarse (training) and fine (inference) scales."""
 
     def __init__(self, static_fine: xr.Dataset, factor: int, static_features: list[str] | None = None):
         self.factor = factor
@@ -91,17 +80,17 @@ class FeatureBuilder:
 
 
 class NO2Downscaler:
+    """Single XGBoost baseline downscaler."""
+
     def __init__(self, cfg: DownscaleConfig | None = None):
         self.cfg = cfg or DownscaleConfig()
         self.model: xgb.XGBRegressor | None = None
         self.features: FeatureBuilder | None = None
         self.metadata: dict = {}
 
-    # ---------------------------------------------------------------------------------------------
     def fit(self, coarse: xr.Dataset, no2_filled: xr.DataArray, fill_flag: xr.DataArray | None,
             static_fine: xr.Dataset, factor: int) -> dict:
-        """Train on coarse-scale samples. Only genuinely observed pixels are used as targets."""
-        from .validation import regression_metrics
+        from ..validation import regression_metrics
 
         cfg = self.cfg
         self.features = FeatureBuilder(static_fine, factor)
@@ -118,7 +107,6 @@ class NO2Downscaler:
             y_days.append(y[keep])
         n_obs = sum(len(y) for y in y_days)
         if n_obs < 200 and fill_flag is not None:
-            log.warning("Only %d observed coarse pixels; training on gap-filled values too", n_obs)
             return self.fit(coarse, no2_filled, None, static_fine, factor)
 
         n_val = max(1, int(round(n_t * cfg.validation_fraction)))
@@ -134,10 +122,7 @@ class NO2Downscaler:
         probe.fit(X_tr, y_tr, eval_set=[(X_va, y_va)], verbose=False)
         best = int(probe.best_iteration) + 1
         holdout = regression_metrics(y_va, probe.predict(X_va))
-        log.info("Downscaler temporal hold-out (coarse scale): R2=%.3f RMSE=%.2f umol/m2, %d trees",
-                 holdout["r2"], holdout["rmse"], best)
 
-        # Refit on every day with the early-stopped tree count.
         self.model = xgb.XGBRegressor(n_estimators=best, **params)
         self.model.fit(np.concatenate([X_tr, X_va]), np.concatenate([y_tr, y_va]), verbose=False)
 
@@ -157,9 +142,7 @@ class NO2Downscaler:
         }
         return self.metadata
 
-    # ---------------------------------------------------------------------------------------------
     def predict_day(self, coarse: xr.Dataset, no2_filled: xr.DataArray, t: int) -> np.ndarray:
-        """Fine-grid column (umol/m^2) for day ``t`` whose block means match the coarse observation."""
         self._require_fitted()
         f = self.features.factor
         field = no2_filled.values[t].astype(np.float64)
@@ -179,7 +162,6 @@ class NO2Downscaler:
         )
 
     def to_surface(self, column_fine: xr.DataArray, coarse: xr.Dataset) -> xr.DataArray:
-        """Boundary-layer-mixed concentration (ug/m^3) - the uncalibrated surface estimate used without stations."""
         f = self.features.factor if self.features else self.metadata["refine_factor"]
         blh_fine = upsample_bilinear(coarse["blh"].values.astype(np.float64), f)
         conc = column_to_surface(column_fine.values.astype(np.float64), blh_fine)
@@ -188,7 +170,6 @@ class NO2Downscaler:
             name="no2_surface", attrs={"units": "ug m-3", "long_name": "Boundary-layer-mixed NO2 (uncalibrated)"},
         )
 
-    # ---------------------------------------------------------------------------------------------
     def save(self, model_dir: str | Path, static_fine: xr.Dataset | None = None) -> Path:
         self._require_fitted()
         model_dir = Path(model_dir)
@@ -199,7 +180,6 @@ class NO2Downscaler:
 
     @classmethod
     def load(cls, model_dir: str | Path, static_fine: xr.Dataset) -> "NO2Downscaler":
-        """Load weights + metadata; ``static_fine`` must contain the covariates the model was trained on."""
         model_dir = Path(model_dir)
         meta = json.loads((model_dir / META_FILE).read_text())
         cfg = DownscaleConfig(**meta["config"])
@@ -216,3 +196,15 @@ class NO2Downscaler:
     def _require_fitted(self):
         if self.model is None or self.features is None:
             raise RuntimeError("Downscaler is not trained - call fit() or load() first")
+
+
+# Import ensemble components
+from .ensemble import EnsembleDownscaler, EnsemblePrediction
+
+__all__ = [
+    "NO2Downscaler",
+    "FeatureBuilder",
+    "column_to_surface",
+    "EnsembleDownscaler",
+    "EnsemblePrediction",
+]

@@ -9,6 +9,7 @@ from app.api.v1.admin.router import router as admin_router
 from app.api.v1.globe.router import router as globe_router
 from app.api.v1.drone.router import router as drone_router
 from app.agent.api import router as agent_router
+from app.api.v1.simulator.router import router as simulator_router
 
 v1_router = APIRouter()
 
@@ -21,3 +22,4 @@ v1_router.include_router(admin_router, prefix="/admin")
 v1_router.include_router(globe_router, prefix="/globe")
 v1_router.include_router(drone_router)
 v1_router.include_router(agent_router, prefix="/agent")
+v1_router.include_router(simulator_router, prefix="/simulator")

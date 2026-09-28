@@ -69,6 +69,48 @@ class ReportResult(TypedDict, total=False):
     evidence: list[str]
 
 
+class XAIResult(TypedDict, total=False):
+    """Output of the XAI Agent (SHAP Explainability)."""
+    executive_summary: str                    # "Road density contributed 41%, low wind speed contributed 28%..."
+    detailed_narrative: str
+    top_contributors: list[dict[str, Any]]   # [{feature, percentage, direction, shap_value}]
+    waterfall_chart_url: str                  # Base64 data URL
+    bar_chart_url: str                        # Base64 data URL
+    base_value: float
+    predicted_value: float
+    confidence: float
+    evidence: list[str]
+
+
+class SimulatorResult(TypedDict, total=False):
+    """Output of the Simulator Agent (What-If Scenarios)."""
+    scenario_name: str
+    scenario_params: dict[str, Any]
+    baseline_peak_no2: float
+    simulated_peak_no2: float
+    peak_no2_change_ugm3: float
+    peak_no2_change_pct: float
+    baseline_exposed_pop: int
+    simulated_exposed_pop: int
+    exposed_pop_change: int
+    plume_displacement_km: float
+    plume_heading_deg: float
+    compliance_improved: bool
+    executive_summary: str
+    policy_recommendation: str
+    evidence: list[str]
+
+
+class EnsembleConfidenceResult(TypedDict, total=False):
+    """Output of the Ensemble Confidence Node."""
+    confidence_score: float                   # 0.0 - 1.0 (e.g. 0.94)
+    confidence_label: str                     # "High (94%)" | "Moderate"
+    disagreement_ugm3: float                  # Model standard deviation across models
+    model_agreement: str                      # "High Agreement across XGBoost, RF, LightGBM"
+    model_weights: dict[str, float]           # {"xgboost": 0.5, "random_forest": 0.3, "lightgbm": 0.2}
+    evidence: list[str]
+
+
 class MissionBrief(TypedDict, total=False):
     """Unified output of the Mission Controller — the final intelligence product."""
     risk_level: Literal["low", "moderate", "high", "critical"]
@@ -123,6 +165,9 @@ class AgentState(TypedDict, total=False):
     compliance_result: ComplianceResult | None
     drone_result: DroneResult | None
     report_result: ReportResult | None
+    xai_result: XAIResult | None
+    simulator_result: SimulatorResult | None
+    ensemble_result: EnsembleConfidenceResult | None
     mission_brief: MissionBrief | None
 
     # ── Mission controller ─────────────────────────────────────────────────

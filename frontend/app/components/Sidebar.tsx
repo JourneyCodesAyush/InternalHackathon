@@ -110,6 +110,17 @@ export default function Sidebar({
           Plume Flow
         </Link>
         <Link
+          href="/simulator"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium transition-colors ${
+            pathname === '/simulator'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1b202e]'
+          }`}
+        >
+          <Sliders className="w-4 h-4" />
+          What-If Simulator
+        </Link>
+        <Link
           href="/globe"
           className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs font-medium transition-colors ${
             pathname === '/globe'

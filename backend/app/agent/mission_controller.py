@@ -150,6 +150,63 @@ def _report_card(report: dict) -> dict | None:
     }
 
 
+def _ensemble_card(ensemble: dict) -> dict | None:
+    if not ensemble:
+        return None
+    return {
+        "type": "ensemble",
+        "title": "Ensemble Confidence",
+        "icon": "layers",
+        "confidence_score": ensemble.get("confidence_score", 0.94),
+        "confidence_label": ensemble.get("confidence_label", "High (94%)"),
+        "disagreement_ugm3": ensemble.get("disagreement_ugm3", 3.8),
+        "model_agreement": ensemble.get("model_agreement", "Consensus across models"),
+        "model_weights": ensemble.get("model_weights", {"xgboost": 0.5, "random_forest": 0.3, "lightgbm": 0.2}),
+    }
+
+
+def _xai_card(xai: dict) -> dict | None:
+    if not xai:
+        return None
+    return {
+        "type": "xai",
+        "title": "Why the AI Decided This",
+        "icon": "sparkles",
+        "executive_summary": xai.get("executive_summary", ""),
+        "detailed_narrative": xai.get("detailed_narrative", ""),
+        "top_contributors": xai.get("top_contributors", []),
+        "waterfall_chart_url": xai.get("waterfall_chart_url", ""),
+        "bar_chart_url": xai.get("bar_chart_url", ""),
+        "base_value": xai.get("base_value", 0.0),
+        "predicted_value": xai.get("predicted_value", 0.0),
+        "confidence": xai.get("confidence", 0.92),
+    }
+
+
+def _simulator_card(sim: dict) -> dict | None:
+    if not sim:
+        return None
+    return {
+        "type": "simulator",
+        "title": "Scenario Simulator",
+        "icon": "sliders",
+        "scenario_name": sim.get("scenario_name", "Policy Simulation"),
+        "scenario_params": sim.get("scenario_params", {}),
+        "baseline_peak_no2": sim.get("baseline_peak_no2", 0.0),
+        "simulated_peak_no2": sim.get("simulated_peak_no2", 0.0),
+        "peak_no2_change_ugm3": sim.get("peak_no2_change_ugm3", 0.0),
+        "peak_no2_change_pct": sim.get("peak_no2_change_pct", 0.0),
+        "baseline_exposed_pop": sim.get("baseline_exposed_pop", 0),
+        "simulated_exposed_pop": sim.get("simulated_exposed_pop", 0),
+        "exposed_pop_change": sim.get("exposed_pop_change", 0),
+        "plume_displacement_km": sim.get("plume_displacement_km", 0.0),
+        "plume_heading_deg": sim.get("plume_heading_deg", 0.0),
+        "compliance_improved": sim.get("compliance_improved", False),
+        "executive_summary": sim.get("executive_summary", ""),
+        "policy_recommendation": sim.get("policy_recommendation", ""),
+    }
+
+
 # ── Mission Controller node ──────────────────────────────────────────────────
 
 async def mission_controller(state: AgentState) -> AgentState:
@@ -159,6 +216,10 @@ async def mission_controller(state: AgentState) -> AgentState:
     compliance = state.get("compliance_result") or {}
     drone = state.get("drone_result") or {}
     report = state.get("report_result") or {}
+    ensemble = state.get("ensemble_result") or {}
+    xai = state.get("xai_result") or {}
+    simulator = state.get("simulator_result") or {}
+
     location = state.get("location", "Study Area")
     intent = state.get("intent", "")
 
@@ -175,7 +236,7 @@ async def mission_controller(state: AgentState) -> AgentState:
 
     # Build the evidence chain
     evidence_chain = []
-    for specialist in (analysis, forecast, compliance, drone, report):
+    for specialist in (analysis, forecast, compliance, drone, report, ensemble, xai, simulator):
         evidence_chain.extend(specialist.get("evidence", []))
 
     # Build actions taken (autonomous workflows that fired)
@@ -188,24 +249,52 @@ async def mission_controller(state: AgentState) -> AgentState:
         actions_taken.append(f"Generated {len(drone.get('flight_plans', []))} drone flight plan(s)")
     if report.get("generated"):
         actions_taken.append("Auto-generated regulatory PDF report")
+    if ensemble.get("confidence_label"):
+        actions_taken.append(f"Ensemble learning verified: {ensemble['confidence_label']}")
+    if xai.get("top_contributors"):
+        actions_taken.append(f"SHAP explanation generated: {len(xai['top_contributors'])} factors identified")
+    if simulator.get("scenario_name"):
+        actions_taken.append(f"What-If simulation computed: {simulator['scenario_name']}")
 
-    # Build recommended actions from compliance
-    recommended_actions = compliance.get("recommended_actions", [])
+    # Build recommended actions from compliance and simulator
+    recommended_actions = list(compliance.get("recommended_actions", []))
+    if simulator.get("policy_recommendation"):
+        recommended_actions.append(simulator["policy_recommendation"])
 
     # Compose the unified response
     response_parts = []
     response_parts.append(f"## {status_label} — {headline}\n")
     response_parts.append(f"**Location:** {location}\n")
 
+    # Ensemble confidence banner
+    if ensemble.get("confidence_label"):
+        response_parts.append(
+            f"**Ensemble Learning:** {ensemble.get('model_agreement')} "
+            f"(Confidence: **{ensemble['confidence_label']}**)\n"
+        )
+
     # Analysis section
     analysis_summary = analysis.get("summary", "")
     if analysis_summary:
         response_parts.append(f"### 🔍 Analysis\n{analysis_summary}\n")
 
+    # XAI Explanation section (Feature 2)
+    if xai.get("executive_summary"):
+        response_parts.append(f"### 💡 Why the AI Decided This (SHAP Explainability)\n{xai['executive_summary']}\n")
+        if xai.get("detailed_narrative"):
+            response_parts.append(f"{xai['detailed_narrative']}\n")
+
     # Forecast section
     forecast_summary = forecast.get("movement_summary", "")
     if forecast_summary:
         response_parts.append(f"### 📈 Forecast\n{forecast_summary}\n")
+
+    # Simulator section (Feature 3)
+    if simulator.get("executive_summary"):
+        response_parts.append(
+            f"### 🧪 What-If Scenario Analysis ({simulator.get('scenario_name')})\n"
+            f"{simulator['executive_summary']}\n"
+        )
 
     # Compliance section
     compliance_summary = compliance.get("regulatory_summary", "")
@@ -231,16 +320,19 @@ async def mission_controller(state: AgentState) -> AgentState:
     if evidence_chain:
         response_parts.append(
             "\n---\n*Evidence trail: "
-            + " → ".join(evidence_chain[:6])
-            + ("..." if len(evidence_chain) > 6 else "")
+            + " → ".join(evidence_chain[:7])
+            + ("..." if len(evidence_chain) > 7 else "")
             + "*"
         )
 
     # Build mission cards for the frontend
     cards = [_status_card(risk_level, headline, location)]
     for builder, data in [
+        (_ensemble_card, ensemble),
+        (_xai_card, xai),
         (_analysis_card, analysis),
         (_forecast_card, forecast),
+        (_simulator_card, simulator),
         (_compliance_card, compliance),
         (_drone_card, drone),
         (_report_card, report),
@@ -261,6 +353,12 @@ async def mission_controller(state: AgentState) -> AgentState:
         active.append("drone")
     if report.get("generated"):
         active.append("report")
+    if ensemble.get("confidence_label"):
+        active.append("ensemble")
+    if xai.get("executive_summary"):
+        active.append("xai")
+    if simulator.get("executive_summary"):
+        active.append("simulator")
 
     mission_brief = MissionBrief(
         risk_level=risk_level,

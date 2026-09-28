@@ -8,22 +8,26 @@ export interface NO2HeatmapOverlayOptions {
   opacity?: number;
 }
 
-// AQI-aligned atmospheric NO₂ color gradient (0 to 200 µg/m³), matching Visualization page
-const NO2_COLOR_SCALE = chroma
-  .scale(['#00e400', '#ffff00', '#ff7e00', '#ff0000', '#8f3f97', '#7e0023'])
-  .domain([0, 40, 80, 120, 160, 200])
-  .mode('lch');
+// CPCB hazard-based atmospheric NO₂ color gradient (0 to 320 µg/m³)
+// Green (0-40), Yellow (40-80), Orange (80-180), Red (180-280), Purple (>280)
+const CPCB_COLOR_SCALE = chroma
+  .scale(['#10b981', '#facc15', '#f97316', '#ef4444', '#9333ea'])
+  .domain([0, 40, 80, 180, 320])
+  .mode('lab');
 
-// Precomputed 256-color lookup table for fast RGBA rendering (~78% base alpha = 200)
+const MAX_NO2_LUT = 320.0;
+
+// Precomputed 256-color lookup table for fast RGBA rendering
 const COLOR_LUT = new Uint8ClampedArray(256 * 4);
 for (let i = 0; i < 256; i++) {
-  const value = (i / 255.0) * 200.0;
-  const rgb = NO2_COLOR_SCALE(value).rgb();
+  const value = (i / 255.0) * MAX_NO2_LUT;
+  const rgb = CPCB_COLOR_SCALE(value).rgb();
   const offset = i * 4;
   COLOR_LUT[offset] = rgb[0];
   COLOR_LUT[offset + 1] = rgb[1];
   COLOR_LUT[offset + 2] = rgb[2];
-  COLOR_LUT[offset + 3] = 200;
+  const alpha = value < 20 ? Math.round(140 + (value / 20) * 65) : 215;
+  COLOR_LUT[offset + 3] = alpha;
 }
 
 export interface INO2HeatmapOverlay {
@@ -102,7 +106,7 @@ export function createNO2HeatmapOverlay(options: NO2HeatmapOverlayOptions): INO2
 
       for (let i = 0; i < totalPixels; i++) {
         const val = this.no2[i];
-        const lutIndex = Math.max(0, Math.min(255, Math.round((val / 200.0) * 255)));
+        const lutIndex = Math.max(0, Math.min(255, Math.round((val / MAX_NO2_LUT) * 255)));
         const offset = lutIndex * 4;
 
         const r = COLOR_LUT[offset];

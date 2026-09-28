@@ -38,8 +38,11 @@ from app.agent.specialists import (
     analysis_agent,
     compliance_agent,
     drone_agent,
+    ensemble_confidence_node,
     forecast_agent,
     report_agent,
+    simulator_agent,
+    xai_agent,
 )
 from app.agent.state import AgentState
 from app.agent.tools import execute_tools
@@ -220,14 +223,17 @@ def build_graph() -> StateGraph:
     # New: automatic trigger detection
     graph.add_node("detect_triggers", detect_triggers)
 
-    # New: specialist agents
+    # Specialist agents
     graph.add_node("analysis_agent", analysis_agent)
     graph.add_node("forecast_agent", forecast_agent)
     graph.add_node("compliance_agent", compliance_agent)
     graph.add_node("drone_agent", drone_agent)
     graph.add_node("report_agent", report_agent)
+    graph.add_node("ensemble_confidence_node", ensemble_confidence_node)
+    graph.add_node("xai_agent", xai_agent)
+    graph.add_node("simulator_agent", simulator_agent)
 
-    # New: mission controller
+    # Mission controller
     graph.add_node("mission_controller", mission_controller)
 
     # ── Entry point ────────────────────────────────────────────────────────
@@ -250,10 +256,13 @@ def build_graph() -> StateGraph:
     # After tools execute → detect autonomous triggers
     graph.add_edge("execute_tools", "detect_triggers")
 
-    # Trigger detection → specialist pipeline (sequential for data dependency)
-    graph.add_edge("detect_triggers", "analysis_agent")
-    graph.add_edge("analysis_agent", "forecast_agent")
-    graph.add_edge("forecast_agent", "compliance_agent")
+    # Trigger detection → specialist pipeline
+    graph.add_edge("detect_triggers", "ensemble_confidence_node")
+    graph.add_edge("ensemble_confidence_node", "analysis_agent")
+    graph.add_edge("analysis_agent", "xai_agent")
+    graph.add_edge("xai_agent", "forecast_agent")
+    graph.add_edge("forecast_agent", "simulator_agent")
+    graph.add_edge("simulator_agent", "compliance_agent")
     graph.add_edge("compliance_agent", "drone_agent")
     graph.add_edge("drone_agent", "report_agent")
 

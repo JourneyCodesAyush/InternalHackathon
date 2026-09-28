@@ -37,6 +37,9 @@ dependencies = [
     "langchain>=1.4.2",
     "langchain-google-genai>=4.4.0",
     "python-docx>=1.2.0",
+    "shap>=0.52.0",
+    "lightgbm>=4.7.0",
+    "matplotlib>=3.11.2",
 ]
 
 [dependency-groups]
