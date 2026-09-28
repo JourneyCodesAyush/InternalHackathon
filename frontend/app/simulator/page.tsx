@@ -231,9 +231,9 @@ export default function SimulatorPage() {
   const [constructionEmission, setConstructionEmission] = useState(1.0);
   const [backgroundEmission, setBackgroundEmission] = useState(1.0);
 
-  // Editable Facilities Nodes
+  // Editable Facilities Nodes filtered to the current active region
   const [facilities, setFacilities] = useState<FacilityNode[]>(() => {
-    return KNOWN_POIS.slice(0, 6).map((poi) => ({
+    return KNOWN_POIS.map((poi) => ({
       id: poi.id,
       name: poi.name,
       category: poi.category,
@@ -244,6 +244,28 @@ export default function SimulatorPage() {
       details: poi.details,
     }));
   });
+
+  // Keep facilities in sync when region changes
+  useEffect(() => {
+    const [cLat, cLng] = currentRegion.center;
+    // Sort or filter facilities closest to region (within 60km)
+    const regional = KNOWN_POIS.filter((p) => {
+      const dLat = Math.abs(p.coordinates[0] - cLat);
+      const dLng = Math.abs(p.coordinates[1] - cLng);
+      return dLat < 0.6 && dLng < 0.6;
+    });
+    const nodes: FacilityNode[] = (regional.length > 0 ? regional : KNOWN_POIS.slice(0, 10)).map((poi) => ({
+      id: poi.id,
+      name: poi.name,
+      category: poi.category,
+      coordinates: poi.coordinates,
+      emissionFactor: 1.0,
+      baselineFactor: 1.0,
+      active: true,
+      details: poi.details,
+    }));
+    setFacilities(nodes);
+  }, [currentRegion]);
 
   // Current Results from Backend Simulator API
   const [impactData, setImpactData] = useState<SimulationImpactData>({
@@ -1160,6 +1182,73 @@ export default function SimulatorPage() {
                 }}
                 className="w-full accent-amber-400 bg-zinc-800 h-1.5 rounded-lg cursor-pointer"
               />
+            </div>
+
+            {/* Individual Industrial Stacks & Facility Nodes */}
+            <div className="space-y-2 pt-2 border-t border-[#242938]/60">
+              <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-300">
+                <span className="flex items-center gap-1.5">
+                  <Flame className="w-3.5 h-3.5 text-rose-400" />
+                  Individual Stacks & Clusters ({facilities.length})
+                </span>
+                <span className="text-[9px] font-mono text-zinc-500">LIVE COUPLING</span>
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {facilities.map((fac) => (
+                  <div key={fac.id} className="p-2 rounded bg-[#161a26]/80 border border-[#232a3d] space-y-1">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-zinc-200 font-medium truncate max-w-[170px]" title={fac.name}>
+                        {fac.name}
+                      </span>
+                      <span className={`font-mono text-[10px] font-bold ${fac.emissionFactor === 0 ? 'text-zinc-500' : fac.emissionFactor > 1 ? 'text-rose-400' : 'text-blue-400'}`}>
+                        {Math.round(fac.emissionFactor * 100)}%
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="2.0"
+                        step="0.05"
+                        value={fac.emissionFactor}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          const updated = facilities.map((f) =>
+                            f.id === fac.id ? { ...f, emissionFactor: val } : f
+                          );
+                          setFacilities(updated);
+                          if (selectedFacility?.id === fac.id) {
+                            setSelectedFacility({ ...selectedFacility, emissionFactor: val });
+                          }
+                          executeSimulation({ facilityOverrides: updated });
+                        }}
+                        className="w-full accent-blue-500 bg-zinc-800 h-1 rounded cursor-pointer"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const val = fac.emissionFactor > 0 ? 0.0 : 1.0;
+                          const updated = facilities.map((f) =>
+                            f.id === fac.id ? { ...f, emissionFactor: val } : f
+                          );
+                          setFacilities(updated);
+                          if (selectedFacility?.id === fac.id) {
+                            setSelectedFacility({ ...selectedFacility, emissionFactor: val });
+                          }
+                          executeSimulation({ facilityOverrides: updated });
+                        }}
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-semibold transition-colors ${
+                          fac.emissionFactor > 0
+                            ? 'bg-rose-950/60 text-rose-300 border border-rose-800/50 hover:bg-rose-900/80'
+                            : 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/50 hover:bg-emerald-900/80'
+                        }`}
+                      >
+                        {fac.emissionFactor > 0 ? 'Halt' : 'Reset'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </aside>
