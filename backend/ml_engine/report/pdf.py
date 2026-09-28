@@ -111,9 +111,18 @@ def _styles(regular: str, bold: str, shaping: bool) -> dict[str, ParagraphStyle]
     }
 
 
+def _fmt_markup(text: str) -> str:
+    """Format NO2 / NO₂ into ReportLab NO<sub>2</sub> markup to ensure proper subscript rendering across all fonts."""
+    if not text:
+        return ""
+    # Avoid double-wrapping if already formatted
+    cleaned = text.replace("NO<sub>2</sub>", "NO2").replace("NO₂", "NO2")
+    return cleaned.replace("NO2", tx.NO2)
+
+
 def _ai_text(text: str) -> str:
     """Escape model output for ReportLab markup and format NO2."""
-    return escape(text).replace("NO₂", tx.NO2).replace("NO2", tx.NO2)
+    return _fmt_markup(escape(text))
 
 
 def _colourise(values: np.ndarray) -> np.ndarray:
@@ -198,7 +207,7 @@ def trend_chart(trend: dict, width: float, height: float = 170) -> Drawing:
 
 
 def _table(rows: list[list], styles: dict, widths: list[float], header: bool = True) -> Table:
-    data = [[c if not isinstance(c, str) else Paragraph(c, styles["head"] if header and i == 0 else styles["cell"])
+    data = [[c if not isinstance(c, str) else Paragraph(_fmt_markup(c), styles["head"] if header and i == 0 else styles["cell"])
              for c in row] for i, row in enumerate(rows)]
     tbl = Table(data, colWidths=widths, repeatRows=1 if header else 0)
     style = [("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("GRID", (0, 0), (-1, -1), 0.4, RULE),
@@ -210,7 +219,7 @@ def _table(rows: list[list], styles: dict, widths: list[float], header: bool = T
 
 
 def _notice_box(text: str, title: str, st: dict, page_w: float) -> Table:
-    box = Table([[Paragraph(f"<b>{escape(title)}</b>", st["cell"])], [Paragraph(escape(text), st["body"])]],
+    box = Table([[Paragraph(f"<b>{escape(title)}</b>", st["cell"])], [Paragraph(_fmt_markup(escape(text)), st["body"])]],
                 colWidths=[page_w])
     box.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(NOTICE_FILL)),
                              ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(NOTICE_EDGE)),
@@ -547,9 +556,11 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
     story += [
         Paragraph("Explainable AI (SHAP Attribution Analysis)", st["h2"]),
         Paragraph(
-            "<b>Attribution Drivers:</b> Road density contributed 41%, low wind speed contributed 28%, "
-            "and built-up area fraction contributed 17% to local NO₂ concentrations above background levels. "
-            "TreeSHAP game-theoretic decomposition confirms vehicular corridors as the dominant localized contributor.",
+            _fmt_markup(
+                "<b>Attribution Drivers:</b> Road density contributed 41%, low wind speed contributed 28%, "
+                "and built-up area fraction contributed 17% to local NO₂ concentrations above background levels. "
+                "TreeSHAP game-theoretic decomposition confirms vehicular corridors as the dominant localized contributor."
+            ),
             st["body"],
         ),
         Spacer(1, 4),
@@ -559,10 +570,12 @@ def build_pdf(facts: dict, lang: str, narrative: dict | None, language_fallback:
     story += [
         Paragraph("What-If Policy Intervention Simulation", st["h2"]),
         Paragraph(
-            "<b>Odd-Even & Clean Air Zone Intervention (-40% Traffic Emissions):</b> "
-            "Physics-based advection-diffusion simulation predicts a <b>-32.4% reduction in peak NO₂</b> "
-            "(112.0 → 75.7 µg/m³), transitioning the receptor zone from <b>EXCEEDANCE</b> to <b>COMPLIANT</b>. "
-            "Estimated 18,500 downwind residents are protected from CPCB 80 µg/m³ threshold exceedance.",
+            _fmt_markup(
+                "<b>Odd-Even & Clean Air Zone Intervention (-40% Traffic Emissions):</b> "
+                "Physics-based advection-diffusion simulation predicts a <b>-32.4% reduction in peak NO₂</b> "
+                "(112.0 → 75.7 µg/m³), transitioning the receptor zone from <b>EXCEEDANCE</b> to <b>COMPLIANT</b>. "
+                "Estimated 18,500 downwind residents are protected from CPCB 80 µg/m³ threshold exceedance."
+            ),
             st["body"],
         ),
         Spacer(1, 4),
@@ -622,7 +635,7 @@ def build_simulation_report_pdf(sim_data: dict) -> bytes:
     )
 
     story = [
-        Paragraph(f"What-If Simulation Impact Report — {scenario_name}", st["title"]),
+        Paragraph(_fmt_markup(f"What-If Simulation Impact Report — {scenario_name}"), st["title"]),
         Paragraph("Physics-Based Atmospheric Dispersion, XAI Attribution & Compliance Assessment", st["subtitle"]),
         Spacer(1, 8),
     ]
@@ -632,7 +645,7 @@ def build_simulation_report_pdf(sim_data: dict) -> bytes:
         [Paragraph(f"<b>Area / Corridor:</b> {escape(region_name)}", st["cell"]),
          Paragraph(f"<b>Generated:</b> {generated}", st["cell"])],
         [Paragraph(f"<b>Intervention:</b> {escape(scenario_name)}", st["cell"]),
-         Paragraph(f"<b>Simulation Solver:</b> 2D Advection-Diffusion-Reaction (Eulerian)", st["cell"])],
+         Paragraph("<b>Simulation Solver:</b> 2D Advection-Diffusion-Reaction (Eulerian)", st["cell"])],
     ]
     mt = Table(meta, colWidths=[page_w / 2] * 2)
     mt.setStyle(TableStyle([("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
@@ -641,7 +654,7 @@ def build_simulation_report_pdf(sim_data: dict) -> bytes:
     # Executive Narrative Callout
     summary_text = impact.get(
         "executive_summary",
-        f"Simulated intervention predicts a significant reduction in peak ground-level NO₂ with improved downwind air quality."
+        f"Simulated intervention predicts a significant reduction in peak ground-level {tx.NO2} with improved downwind air quality."
     )
     story += [_notice_box(summary_text, "Executive Summary & Simulation Verdict", st, page_w), Spacer(1, 8)]
 
@@ -663,8 +676,8 @@ def build_simulation_report_pdf(sim_data: dict) -> bytes:
 
     comp_rows = [
         ["Environmental Metric", "Baseline Observed", "Simulated What-If", "Difference / Impact"],
-        ["Peak NO₂ Concentration", f"{b_peak:.1f} µg/m³", f"{s_peak:.1f} µg/m³", f"{peak_chg:+.1f} µg/m³ ({peak_pct:+.1f}%)"],
-        ["Area Mean NO₂", f"{impact.get('baseline_mean_no2', 54.0):.1f} µg/m³", f"{impact.get('simulated_mean_no2', 38.0):.1f} µg/m³", f"{impact.get('mean_no2_change_ugm3', -16.0):+.1f} µg/m³"],
+        [f"Peak {tx.NO2} Concentration", f"{b_peak:.1f} µg/m³", f"{s_peak:.1f} µg/m³", f"{peak_chg:+.1f} µg/m³ ({peak_pct:+.1f}%)"],
+        [f"Area Mean {tx.NO2}", f"{impact.get('baseline_mean_no2', 54.0):.1f} µg/m³", f"{impact.get('simulated_mean_no2', 38.0):.1f} µg/m³", f"{impact.get('mean_no2_change_ugm3', -16.0):+.1f} µg/m³"],
         ["Population Exposed (> 80 µg/m³)", f"{b_pop:,d}", f"{s_pop:,d}", f"{pop_chg:+,d} residents"],
         ["Population Exposed (> WHO 25 µg/m³)", f"{impact.get('baseline_who_exposed_pop', 450000):,d}", f"{impact.get('simulated_who_exposed_pop', 210000):,d}", f"{impact.get('who_exposed_pop_change', -240000):+,d} residents"],
         ["Plume Center-of-Mass Shift", "0.00 km", f"{plume_dist:.2f} km", f"Displaced heading {plume_deg:.0f}°"],
@@ -691,7 +704,9 @@ def build_simulation_report_pdf(sim_data: dict) -> bytes:
     story += [
         Paragraph("3. Explainable AI (SHAP TreeExplainer Attribution)", st["h2"]),
         Paragraph(
-            xai.get("executive_summary", "Road density contributed 41%, low wind speed contributed 28%, and industrial emissions contributed 14% to local NO₂ concentrations above background levels."),
+            _fmt_markup(
+                xai.get("executive_summary", "Road density contributed 41%, low wind speed contributed 28%, and industrial emissions contributed 14% to local NO₂ concentrations above background levels.")
+            ),
             st["body"],
         ),
     ]
@@ -707,14 +722,14 @@ def build_simulation_report_pdf(sim_data: dict) -> bytes:
         shap_rows.append([
             item.get("feature", "Environmental Factor"),
             f"{item.get('contribution_pct', 0.0):.1f}%",
-            "Increases NO₂" if item.get("direction") == "increases" else "Reduces NO₂ (Dispersion)",
+            f"Increases {tx.NO2}" if item.get("direction") == "increases" else f"Reduces {tx.NO2} (Dispersion)",
         ])
     story += [_table(shap_rows, st, [page_w * 0.45, page_w * 0.25, page_w * 0.30]), Spacer(1, 10)]
 
     # Suspicious Activity Detection & Hotspots
     story += [Paragraph("4. Suspicious Local Sources & Anomaly Check", st["h2"])]
     if anomalies:
-        anom_rows = [["Location", "Observed NO₂", "Baseline NO₂", "Investigation Finding", "Compliance Status"]]
+        anom_rows = [["Location", f"Observed {tx.NO2}", f"Baseline {tx.NO2}", "Investigation Finding", "Compliance Status"]]
         for a in anomalies[:6]:
             coords = f"{a.get('lat', 19.0):.3f}°N, {a.get('lon', 72.8):.3f}°E"
             val = a.get("value", 85.0)
@@ -732,10 +747,10 @@ def build_simulation_report_pdf(sim_data: dict) -> bytes:
     story += [Spacer(1, 10)]
 
     # Policy Recommendation
-    reco_text = impact.get(
+    reco_text = _fmt_markup(impact.get(
         "policy_recommendation",
-        f"**Action Recommended:** Enact scenario measures. Peak concentration drops significantly, mitigating CPCB exceedance risk across dense receptor corridors."
-    )
+        f"<b>Action Recommended:</b> Enact scenario measures. Peak concentration drops significantly, mitigating CPCB exceedance risk across dense receptor corridors."
+    ))
     story += [
         Paragraph("5. Recommended Strategic Interventions", st["h2"]),
         Paragraph(reco_text, st["body"]),
