@@ -125,13 +125,13 @@ def _grounded(text: str, allowed: set[float]) -> bool:
     return True
 
 
-def _usage_path() -> Path:
-    return CACHE_DIR / "_usage.json"
+def _usage_path(name: str = "_usage") -> Path:
+    return CACHE_DIR / f"{name}.json"
 
 
-def _check_budget(daily_limit: int, time_left: float | None = None) -> bool:
+def _check_budget(daily_limit: int, time_left: float | None = None, usage_name: str = "_usage") -> bool:
     try:
-        usage = json.loads(_usage_path().read_text())
+        usage = json.loads(_usage_path(usage_name).read_text())
     except (OSError, ValueError):
         usage = {}
     now = time.time()
@@ -150,9 +150,9 @@ def _check_budget(daily_limit: int, time_left: float | None = None) -> bool:
     return True
 
 
-def _record_call(cooldown: bool = False) -> None:
+def _record_call(cooldown: bool = False, usage_name: str = "_usage") -> None:
     try:
-        usage = json.loads(_usage_path().read_text())
+        usage = json.loads(_usage_path(usage_name).read_text())
     except (OSError, ValueError):
         usage = {}
     today = str(date.today())
@@ -162,8 +162,8 @@ def _record_call(cooldown: bool = False) -> None:
     usage["last_call"] = time.time()
     if cooldown:
         usage["cooldown_until"] = time.time() + COOLDOWN_S
-    _usage_path().parent.mkdir(parents=True, exist_ok=True)
-    _usage_path().write_text(json.dumps(usage))
+    _usage_path(usage_name).parent.mkdir(parents=True, exist_ok=True)
+    _usage_path(usage_name).write_text(json.dumps(usage))
 
 
 def generate_narrative(facts: dict, lang: str, api_key: str | None = None,

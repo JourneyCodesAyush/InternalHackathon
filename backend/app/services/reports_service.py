@@ -12,6 +12,7 @@ from app.services.activity_service import log_activity
 from app.services import upload_data
 from ml_engine.report import analyse_area as build_analysis
 from ml_engine.report import analyse_upload, generate_upload_report
+from ml_engine.report.chat import answer_question
 from ml_engine.report import generate_report as build_report
 
 
@@ -136,3 +137,11 @@ async def generate_report(
             "X-Report-Notice": meta.get("notice") or "",
         },
     )
+
+
+async def chat_answer(question: str, context: dict, language: str = "en", history: Optional[list] = None) -> dict:
+    """Gemini's answer to a typed question from the AI model's output for the area (``answer`` is None when
+    AI is unavailable; the page then answers from its templates)."""
+    answer = await asyncio.to_thread(answer_question, question, context, language, history or [],
+                                     settings.GEMINI_API_KEY)
+    return {"answer": answer, "source": "ai" if answer else "none"}

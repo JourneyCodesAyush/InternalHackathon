@@ -1,6 +1,6 @@
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReportRequest(BaseModel):
@@ -13,3 +13,16 @@ class ReportRequest(BaseModel):
     city: Optional[str] = None  # a known city name overrides bbox (shared, cached city areas)
     # "upload": report on end_date of the uploaded daily data (backend/data/test_data), the data the map shows
     data_source: Optional[Literal["upload"]] = None
+
+
+class ChatMessage(BaseModel):
+    sender: Literal["user", "agent"]
+    text: str
+
+
+class ChatRequest(BaseModel):
+    question: str = Field(..., min_length=1, max_length=600)
+    language: Literal["en", "hi", "mr"] = "en"
+    # what the page already has from the AI models: the area analysis and the pinned point's value/forecast
+    context: dict[str, Any] = Field(default_factory=dict)
+    history: list[ChatMessage] = Field(default_factory=list, max_length=20)

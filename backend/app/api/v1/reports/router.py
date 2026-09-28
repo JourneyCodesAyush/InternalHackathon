@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.config import get_supabase
 from app.dependencies import get_current_user
-from app.models.reports import ReportRequest
+from app.models.reports import ChatRequest, ReportRequest
 from app.services import reports_service
 
 router = APIRouter()
@@ -63,4 +63,23 @@ async def analyse_area(
     return await reports_service.analyse_area(
         body.region_name, body.bbox, body.end_date, language=body.language, city=body.city,
         data_source=body.data_source,
+    )
+
+
+@router.post(
+    "/chat",
+    summary="Answer a typed question about the area (Gemini + model output)",
+    tags=["reports"],
+)
+async def chat(
+    body: ChatRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    Answer a free-text question from the AI model's output for the area and the pinned point (sent by the
+    page as ``context``), using Gemini. Returns ``{"answer": str | null, "source": "ai" | "none"}``; with no
+    AI answer (no key, quota, offline mode) the page answers from its predefined templates.
+    """
+    return await reports_service.chat_answer(
+        body.question, body.context, body.language, [m.model_dump() for m in body.history]
     )
