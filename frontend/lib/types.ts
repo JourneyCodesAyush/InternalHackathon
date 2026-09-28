@@ -95,6 +95,11 @@ export interface UploadedSatelliteFile {
     meanNO2: number; // µg/m³
     peakNO2: number; // µg/m³
     processingDurationSec: number;
+    r2Quality?: number;
+    validationRmse?: number;
+    rawValues?: number[];
+    cleanedValues?: number[];
+    isCloudMask?: boolean[];
   };
   _file?: File;
   error?: string;
