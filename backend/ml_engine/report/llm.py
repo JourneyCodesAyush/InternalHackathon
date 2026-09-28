@@ -55,6 +55,31 @@ def compact_facts(facts: dict, lang: str = "en") -> dict:
     """The subset of facts the model needs, rounded, without arrays or large objects. Dates and people
     counts also come pre-formatted for the report language (e.g. "31 दिसंबर 2025", "2.2 करोड़")."""
     cur, pop, fc, tr = facts["current"], facts.get("population"), facts["forecast"], facts.get("trend")
+    hz = (facts.get("haze") or {}).get("latest")
+    haze_summary = None
+    if hz:
+        haze_summary = {
+            "haze_index": hz.get("haze_index"),
+            "class": hz.get("class"),
+            "transmission_mean": hz.get("transmission_mean"),
+        }
+
+    flight_plans = []
+    for fp in facts.get("flight_plans") or []:
+        use = fp.get("relocation") or fp
+        flight_plans.append({
+            "target": fp["target"]["near"],
+            "target_no2_ugm3": round(fp["target"]["value"]) if fp["target"].get("value") else None,
+            "decision": use["decision"],
+            "distance_km": use["distance_km"],
+            "flight_time_min": use["total_time_min"],
+            "battery_mah": use["total_mah"],
+            "wind_speed_ms": use["wind"]["speed_ms"],
+            "wind_compass": use["wind"]["from_compass"],
+            "elevation_gain_m": use["elevation"]["gain_m"],
+            "airspace_zone": use["airspace"]["zone"],
+        })
+
     return {
         "area": facts["area"]["name"], "date": facts["date"], "date_display": fmt_date(facts["date"], lang),
         "standards_ugm3": {"cpcb_naaqs_24h": 80, "cpcb_naaqs_annual": 40, "who_24h": 25, "hazardous_above": 180},
@@ -66,6 +91,8 @@ def compact_facts(facts: dict, lang: str = "en") -> dict:
         "period_average_ugm3": round(facts["window_stats"]["mean"]),
         "hotspots": [{"near": h["near"], "no2_ugm3": round(h["value"]), "likely_sources": h["sources"]}
                      for h in facts["hotspots"]],
+        "haze_dcp": haze_summary,
+        "preinspection_flight_plans": flight_plans,
         "population": None if not pop else {
             "total": pop["total"], "total_display": fmt_people(pop["total"], lang),
             "people_above_80": pop["above_naaqs"], "people_above_80_display": fmt_people(pop["above_naaqs"], lang),
@@ -93,9 +120,9 @@ def _prompt(cf: dict, lang: str) -> tuple[str, str]:
     user = (
         "Facts (JSON):\n" + json.dumps(cf, ensure_ascii=False) + "\n\n"
         f"Return JSON with: executive_summary (3-4 sentences, max 110 words, in {language}), "
-        f"risk_context (2-3 sentences, max 90 words: health implications and likely sources, in {language}), "
-        f"recommendations (3-5 short actionable items for authorities, each max 25 words, in {language}). "
-        "Base the recommendations on the status, hotspots, forecast alerts and trend."
+        f"risk_context (2-3 sentences, max 90 words: health implications, haze optical transmission correlation with XGBoost predictions, in {language}), "
+        f"recommendations (3-5 short actionable items for authorities including drone pre-inspection flights for high-risk spots, each max 25 words, in {language}). "
+        "Base the recommendations on the status, hotspots, haze readings, preinspection flight plans, forecast alerts and trend."
     )
     return system, user
 

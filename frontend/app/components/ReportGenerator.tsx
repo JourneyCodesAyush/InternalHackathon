@@ -16,6 +16,14 @@ import {
   User,
   RotateCcw,
   Activity,
+  Plane,
+  Navigation,
+  Wind,
+  Battery,
+  ShieldCheck,
+  ChevronDown,
+  ChevronUp,
+  MapPin,
 } from 'lucide-react';
 
 import DatePicker from '../visualization/_components/DatePicker';
@@ -52,6 +60,47 @@ const HALF_SIZE_DEG = 0.15; // report area around the selected point when no kno
 const WEATHER_LAG_DAYS = 6; // weather data reaches the model ~6 days late (matches the backend)
 const DAY_MS = 86_400_000;
 
+/** Autonomous pre-inspection drone flight plan for high-risk spots. */
+export interface StructuredFlightPlan {
+  target: { near: string; lat: number; lon: number; value?: number; severity?: string; kinds?: string[]; reasons?: string[] };
+  home: { name: string; lat: number; lon: number; elevation_m?: number };
+  distance_km: number;
+  round_trip_km: number;
+  bearing_deg: number;
+  bearing_compass: string;
+  return_bearing_deg: number;
+  wind: {
+    speed_ms: number;
+    from_deg: number;
+    from_compass: string;
+    outbound_headwind_ms: number;
+    return_headwind_ms: number;
+    crosswind_ms: number;
+    crab_deg: number;
+  };
+  ground_speed_out_ms: number;
+  ground_speed_back_ms: number;
+  elevation: {
+    home_m?: number;
+    target_m?: number;
+    gain_m?: number;
+    max_terrain_m?: number;
+    cruise_amsl_m: number;
+    cruise_agl_m: number;
+    survey_agl_m: number;
+  };
+  phases: { phase: string; time_s: number; mah: number }[];
+  total_time_min: number;
+  total_mah: number;
+  battery: { capacity_mah: number; usable_mah: number; remaining_pct: number; max_radius_km?: number };
+  airspace: { nearest_airport?: string; distance_km: number; zone: string; max_agl_m: number };
+  issues: string[];
+  decision: 'go' | 'conditional' | 'no_go';
+  relocation?: StructuredFlightPlan | null;
+  waypoints?: { name: string; lat: number; lon: number; alt_agl: number; action: string }[];
+  map_data_uri?: string | null;
+}
+
 /** The subset of POST /api/v1/reports/analysis the panel shows. */
 interface Analysis {
   date: string;
@@ -72,6 +121,8 @@ interface Analysis {
   population: { total: number; above_naaqs: number; share_above_naaqs: number; weighted_mean: number } | null;
   trend: { dates: string[]; observed: number[]; adjusted: number[]; direction: string } | null;
   labels: { status: string; hotspot_sources: string[][]; anomaly_kinds?: string[][]; anomaly_title?: string };
+  /** Pre-inspection drone flight plans for high-risk spots (from Ground Station Pi portal base). */
+  flight_plans?: StructuredFlightPlan[];
   texts: {
     summary: string;
     forecast: string[];
@@ -161,6 +212,230 @@ function TrendSparkline({ trend }: { trend: NonNullable<Analysis['trend']> }) {
   );
 }
 
+function FlightPlanCard({ fp, index }: { fp: StructuredFlightPlan; index: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const target = fp.target;
+  const home = fp.home;
+  const wind = fp.wind;
+  const el = fp.elevation;
+  const bat = fp.battery;
+  const air = fp.airspace;
+
+  const decisionStyles: Record<string, { bg: string; text: string; label: string }> = {
+    go: { bg: 'bg-emerald-500/20 border-emerald-500/50', text: 'text-emerald-300', label: 'AUTONOMOUS FLIGHT: GO' },
+    conditional: { bg: 'bg-amber-500/20 border-amber-500/50', text: 'text-amber-300', label: 'GO WITH CONDITIONS' },
+    no_go: { bg: 'bg-rose-500/20 border-rose-500/50', text: 'text-rose-300', label: 'NO-GO FROM GROUND STATION' },
+  };
+  const dStyle = decisionStyles[fp.decision] || decisionStyles.conditional;
+
+  return (
+    <div className="rounded-lg border border-[#2e374d] bg-[#10141f] p-3 space-y-2.5">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              MISSION #{index + 1}
+            </span>
+            <span className="font-semibold text-zinc-100 text-[13px]">{target.near}</span>
+            {target.severity && (
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                target.severity === 'high' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+              }`}>
+                {target.severity.toUpperCase()} RISK
+              </span>
+            )}
+            {target.value && (
+              <span className="text-[11px] font-mono text-rose-200">
+                ({target.value.toFixed(0)} µg/m³)
+              </span>
+            )}
+          </div>
+          <div className="text-[11px] text-zinc-400 mt-0.5 flex items-center gap-1">
+            <MapPin className="w-3 h-3 text-emerald-400 shrink-0" />
+            <span>Launch Base: {home.name} ({home.lat.toFixed(4)}°N, {home.lon.toFixed(4)}°E)</span>
+          </div>
+        </div>
+        <span className={`px-2 py-1 rounded text-[10px] font-bold border shrink-0 ${dStyle.bg} ${dStyle.text}`}>
+          {dStyle.label}
+        </span>
+      </div>
+
+      {/* Embedded Route Map Graphic */}
+      {fp.map_data_uri ? (
+        <div className="relative rounded-md overflow-hidden border border-[#2a3449] bg-[#0c1017]">
+          <img
+            src={fp.map_data_uri}
+            alt={`Pre-inspection flight corridor to ${target.near}`}
+            className="w-full h-auto max-h-[300px] object-contain mx-auto"
+          />
+          <div className="absolute bottom-1.5 right-2 text-[9px] bg-black/75 px-2 py-0.5 rounded text-zinc-300 backdrop-blur-xs border border-white/10">
+            Ground Station (Pi Portal) → Destination Survey Orbit
+          </div>
+        </div>
+      ) : (
+        <div className="p-2.5 rounded bg-[#141a26] border border-[#242e42] text-[12px] text-zinc-300">
+          📍 Route Vector: ({home.lat.toFixed(4)}°N, {home.lon.toFixed(4)}°E) → ({target.lat.toFixed(4)}°N, {target.lon.toFixed(4)}°E)
+        </div>
+      )}
+
+      {/* Tactical Telemetry Metrics 4-Box Grid */}
+      <div className="grid grid-cols-2 gap-2 text-[12px]">
+        {/* Box 1: Distance & Bearing */}
+        <div className="p-2 rounded bg-[#141926] border border-[#222a3d] space-y-0.5">
+          <div className="text-[10px] uppercase font-semibold text-sky-400 flex items-center gap-1">
+            <Navigation className="w-3 h-3" /> Distance & Flight Track
+          </div>
+          <div className="text-zinc-200 font-medium">
+            {fp.distance_km.toFixed(1)} km <span className="text-zinc-500">(RT: {fp.round_trip_km.toFixed(1)} km)</span>
+          </div>
+          <div className="text-[11px] text-zinc-400">
+            Bearing: {fp.bearing_deg}° ({fp.bearing_compass}) · Return: {fp.return_bearing_deg}°
+          </div>
+          <div className="text-[11px] text-zinc-400">
+            Ground Speed: {fp.ground_speed_out_ms.toFixed(1)} m/s out · {fp.ground_speed_back_ms.toFixed(1)} m/s back
+          </div>
+        </div>
+
+        {/* Box 2: Aerodynamics & Wind */}
+        <div className="p-2 rounded bg-[#141926] border border-[#222a3d] space-y-0.5">
+          <div className="text-[10px] uppercase font-semibold text-emerald-400 flex items-center gap-1">
+            <Wind className="w-3 h-3" /> Wind Dynamics
+          </div>
+          <div className="text-zinc-200 font-medium">
+            {wind.speed_ms.toFixed(1)} m/s <span className="text-zinc-500">from {wind.from_compass} ({wind.from_deg}°)</span>
+          </div>
+          <div className="text-[11px] text-zinc-400">
+            Headwind: {wind.outbound_headwind_ms > 0 ? '+' : ''}{wind.outbound_headwind_ms.toFixed(1)} m/s out / {wind.return_headwind_ms > 0 ? '+' : ''}{wind.return_headwind_ms.toFixed(1)} back
+          </div>
+          <div className="text-[11px] text-zinc-400">
+            Crosswind: {wind.crosswind_ms.toFixed(1)} m/s · Crab: {wind.crab_deg.toFixed(1)}°
+          </div>
+        </div>
+
+        {/* Box 3: Elevation & Airspace */}
+        <div className="p-2 rounded bg-[#141926] border border-[#222a3d] space-y-0.5">
+          <div className="text-[10px] uppercase font-semibold text-purple-400 flex items-center gap-1">
+            <ShieldCheck className="w-3 h-3" /> Altitude & Airspace
+          </div>
+          <div className="text-zinc-200 font-medium">
+            Gain: {el.gain_m !== undefined && el.gain_m !== null ? `${el.gain_m > 0 ? '+' : ''}${el.gain_m} m` : 'Sea level'}
+            <span className="text-zinc-500"> (Cruise: {el.cruise_amsl_m}m AMSL)</span>
+          </div>
+          <div className="text-[11px] text-zinc-400">
+            Survey Orbit: {el.survey_agl_m.toFixed(0)}m AGL (150m radius, 2 laps)
+          </div>
+          <div className="text-[11px] text-amber-300/90 font-medium">
+            DGCA {air.zone.toUpperCase()} ({air.nearest_airport || 'Airport'} {air.distance_km} km)
+          </div>
+        </div>
+
+        {/* Box 4: Battery & Power Model */}
+        <div className="p-2 rounded bg-[#141926] border border-[#222a3d] space-y-0.5">
+          <div className="text-[10px] uppercase font-semibold text-amber-400 flex items-center gap-1">
+            <Battery className="w-3 h-3" /> Battery Consumption
+          </div>
+          <div className="text-zinc-200 font-medium">
+            {fp.total_mah} mAh <span className="text-zinc-500">({fp.total_time_min.toFixed(1)} min mission)</span>
+          </div>
+          <div className="text-[11px] text-zinc-400">
+            Pack: {bat.capacity_mah} mAh · Usable: {bat.usable_mah} mAh
+          </div>
+          <div className="text-[11px] font-semibold text-emerald-400">
+            Landing Reserve: {Math.max(0, bat.remaining_pct)}% remaining
+          </div>
+        </div>
+      </div>
+
+      {/* Expand/Collapse Toggle for Waypoints & 7 Phases */}
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="w-full py-1.5 px-2.5 rounded bg-[#182030] hover:bg-[#1f293d] border border-[#2b364d] text-[11px] text-blue-300 font-medium flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+      >
+        <span>{expanded ? 'Hide 7 Flight Phases & Waypoint Log' : 'View Full 7 Flight Phases & Waypoint Log'}</span>
+        {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+      </button>
+
+      {expanded && (
+        <div className="space-y-2 pt-1 border-t border-[#1e2738] text-[11px]">
+          {/* Phases Table */}
+          <div className="space-y-1">
+            <div className="text-[10px] uppercase font-semibold text-zinc-400">Phase-by-Phase Energy Profile</div>
+            <div className="overflow-x-auto rounded border border-[#242e42]">
+              <table className="w-full text-left">
+                <thead className="bg-[#151c2a] text-zinc-400 text-[10px]">
+                  <tr>
+                    <th className="py-1 px-2">Phase</th>
+                    <th className="py-1 px-2 text-right">Duration</th>
+                    <th className="py-1 px-2 text-right">Battery (mAh)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#1e2638] text-zinc-300">
+                  {fp.phases.map((ph, pIdx) => (
+                    <tr key={pIdx} className="hover:bg-[#151b28]">
+                      <td className="py-1 px-2">{ph.phase}</td>
+                      <td className="py-1 px-2 text-right font-mono">{Math.floor(ph.time_s / 60)}:{String(ph.time_s % 60).padStart(2, '0')}</td>
+                      <td className="py-1 px-2 text-right font-mono text-amber-300">{ph.mah} mAh</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-[#151b28] font-bold text-zinc-100">
+                    <td className="py-1 px-2">Total Mission</td>
+                    <td className="py-1 px-2 text-right font-mono">{fp.total_time_min.toFixed(1)} min</td>
+                    <td className="py-1 px-2 text-right font-mono text-emerald-300">{fp.total_mah} mAh</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Waypoints */}
+          {fp.waypoints && fp.waypoints.length > 0 && (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase font-semibold text-zinc-400">Autonomous Waypoint Navigation Log</div>
+              <div className="overflow-x-auto rounded border border-[#242e42]">
+                <table className="w-full text-left">
+                  <thead className="bg-[#151c2a] text-zinc-400 text-[10px]">
+                    <tr>
+                      <th className="py-1 px-2">WP</th>
+                      <th className="py-1 px-2">Coordinates</th>
+                      <th className="py-1 px-2 text-right">Alt (AGL)</th>
+                      <th className="py-1 px-2">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1e2638] text-zinc-300">
+                    {fp.waypoints.map((wp, wIdx) => (
+                      <tr key={wIdx} className="hover:bg-[#151b28]">
+                        <td className="py-1 px-2 font-mono text-blue-300">{wp.name}</td>
+                        <td className="py-1 px-2 font-mono text-[10px]">{wp.lat.toFixed(4)}°N, {wp.lon.toFixed(4)}°E</td>
+                        <td className="py-1 px-2 text-right font-mono">{wp.alt_agl}m</td>
+                        <td className="py-1 px-2 uppercase text-[10px] text-zinc-400">{wp.action.replace('_', ' ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Forward Launch Point Relocation advice if battery exceeded */}
+          {fp.relocation && (
+            <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-200">
+              <div className="font-semibold flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                Forward Launch Point Deployment Recommended
+              </div>
+              <p className="mt-0.5 text-[11px] text-amber-200/90 leading-relaxed">
+                Site exceeds direct round-trip battery range from Ground Station. Drive by road to forward launch point at {fp.relocation.home.lat.toFixed(4)}°N, {fp.relocation.home.lon.toFixed(4)}°E ({fp.relocation.distance_km.toFixed(1)} km from target).
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AnalysisPanel({ a }: { a: Analysis }) {
   const cur = a.current;
   const status = STATUS_STYLE[cur.status];
@@ -214,22 +489,52 @@ function AnalysisPanel({ a }: { a: Analysis }) {
         )}
       </div>
 
+      {/* Multimodal Haze (Drone Camera DCP) + XGBoost NO₂ Model */}
       {a.texts.haze && (
-        <div className="space-y-1">
-          <div className="text-[13px] uppercase tracking-wide text-zinc-500">Haze (drone camera) + NO₂</div>
-          <p className="text-[13px] text-zinc-300 leading-relaxed">{a.texts.haze}</p>
+        <div className="space-y-1.5 p-3 rounded-lg border border-purple-500/30 bg-purple-500/10">
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] font-semibold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+              <span>🌫️</span> Multimodal AI: XGBoost NO₂ + OpenCV DCP Camera Haze
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/20 text-purple-200 font-mono">
+              Fused Insights
+            </span>
+          </div>
+          <p className="text-[13px] text-purple-100 leading-relaxed">{a.texts.haze}</p>
         </div>
       )}
 
-      {a.texts.flight_plans && a.texts.flight_plans.length > 0 && (
-        <div className="space-y-1">
-          <div className="text-[13px] uppercase tracking-wide text-zinc-500">Pre-inspection drone flights</div>
-          {a.texts.flight_plans.map((line) => (
-            <div key={line} className="p-2 rounded border border-sky-500/40 bg-sky-500/10 text-[13px] text-sky-100">
-              {line}
+      {/* Pre-Inspection Autonomous Drone Flight Plans */}
+      {((a.flight_plans && a.flight_plans.length > 0) || (a.texts.flight_plans && a.texts.flight_plans.length > 0)) && (
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="text-[13px] uppercase tracking-wide text-zinc-300 font-semibold flex items-center gap-1.5">
+              <Plane className="w-4 h-4 text-sky-400" />
+              <span>Autonomous Pre-Inspection Drone Flight Plans</span>
             </div>
-          ))}
-          <p className="text-[12px] text-zinc-500">Full flight plans (map, wind, elevation, battery, waypoints) are in the PDF report.</p>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30 font-medium">
+              Launch Base: Mumbai Pi Portal Base
+            </span>
+          </div>
+          <p className="text-[12px] text-zinc-400">
+            Autonomous reconnaissance flight executed prior to official regulatory on-site inspection. Surveys NO₂ plumes at 50m AGL and captures geo-tagged frames for OpenCV DCP haze verification.
+          </p>
+
+          {/* Render Rich Cards if flight_plans objects exist, else fallback to text lines */}
+          {a.flight_plans && a.flight_plans.length > 0 ? (
+            a.flight_plans.map((fp, idx) => (
+              <FlightPlanCard key={idx} fp={fp} index={idx} />
+            ))
+          ) : (
+            a.texts.flight_plans && a.texts.flight_plans.map((line) => (
+              <div key={line} className="p-2 rounded border border-sky-500/40 bg-sky-500/10 text-[13px] text-sky-100">
+                {line}
+              </div>
+            ))
+          )}
+          <p className="text-[12px] text-zinc-500 italic">
+            Full flight plans (including high-resolution tactical route map, wind legs, terrain elevation profile, 7 flight phases, and DGCA Digital Sky compliance) are included in the downloadable PDF report.
+          </p>
         </div>
       )}
 
@@ -375,6 +680,18 @@ const PREDEFINED_QUESTIONS: PredefinedQuestion[] = [
     query: 'What is the 24-hour pollution forecast trend for this location?',
   },
   {
+    id: 'preinspection_flight',
+    icon: '🛸',
+    label: 'Drone Pre-Inspection Flight Plan',
+    query: 'Show me the autonomous drone pre-inspection flight plan for high-risk sites in this area.',
+  },
+  {
+    id: 'haze_xgboost_fusion',
+    icon: '🌫️',
+    label: 'XGBoost + DCP Haze Correlation',
+    query: 'How do XGBoost predictions and OpenCV DCP camera haze readings correlate in this report?',
+  },
+  {
     id: 'methodology',
     icon: '🛰️',
     label: '1km Satellite Downscaling',
@@ -423,6 +740,42 @@ function getAgentResponse(
   analysis: Analysis | null
 ): string {
   const q = query.toLowerCase();
+
+  // -1. Autonomous Pre-Inspection Drone Flight Plan
+  if (/flight|drone|preinspect|battery|mah|elevation|waypoint|launch base|ground station/.test(q)) {
+    if (!analysis) {
+      return `Click **'Analyse Area'** first: I will compute downscaled NO₂ concentrations across **${locationName}**, detect high-risk anomalies, and generate autonomous pre-inspection drone flight plans from the Ground Station (Pi Portal Base: 19.0760° N, 72.8777° E).`;
+    }
+    const plans = analysis.flight_plans ?? [];
+    if (plans.length > 0) {
+      const summaryList = plans.map((p, idx) => {
+        const use = p.relocation || p;
+        const gain = use.elevation.gain_m !== undefined && use.elevation.gain_m !== null ? `${use.elevation.gain_m > 0 ? '+' : ''}${use.elevation.gain_m} m` : 'N/A';
+        return `• **Mission #${idx + 1}: ${p.target.near}** (${p.target.severity ? p.target.severity.toUpperCase() + ' RISK' : 'EXCEEDANCE'})
+  - **Ground Station (Launch Base):** ${p.home.name} (${p.home.lat.toFixed(4)}°N, ${p.home.lon.toFixed(4)}°E)
+  - **Flight Distance:** **${use.distance_km.toFixed(1)} km** one-way (Round Trip: **${use.round_trip_km.toFixed(1)} km**)
+  - **Wind Dynamics:** **${use.wind.speed_ms.toFixed(1)} m/s** from ${use.wind.from_compass} (${use.wind.from_deg}°), Headwind ${use.wind.outbound_headwind_ms > 0 ? '+' : ''}${use.wind.outbound_headwind_ms.toFixed(1)} m/s, Crosswind ${use.wind.crosswind_ms.toFixed(1)} m/s (Crab: ${use.wind.crab_deg.toFixed(1)}°)
+  - **Elevation Profile:** Net Gain **${gain}** | Cruise: **${use.elevation.cruise_amsl_m} m AMSL** (${use.elevation.cruise_agl_m} m AGL)
+  - **Battery Energy Model:** **${use.total_mah} mAh** (${use.total_time_min.toFixed(1)} min mission, **${Math.max(0, use.battery.remaining_pct)}%** safe reserve on landing)
+  - **Airspace Regulation:** **DGCA ${use.airspace.zone.toUpperCase()}** (${use.airspace.nearest_airport || 'Airport'} ${use.airspace.distance_km} km, Max ${use.airspace.max_agl_m}m)
+  - **Flight Decision:** **${use.decision.toUpperCase()}**
+  - **Payload Survey Protocol:** 2 laps of 150m radius orbit at 50m AGL capturing 1 Hz NO₂ and 5s OpenCV DCP haze frames.`;
+      }).join('\n\n');
+      return `🛸 **Autonomous Pre-Inspection Drone Flight Plans for ${locationName}:**\n\n${summaryList}\n\n*Full tactical map graphics with terrain elevation and 7 flight phases are in the Detailed Analysis tab and the PDF report.*`;
+    }
+    const lines = analysis.texts.flight_plans ?? [];
+    return lines.length
+      ? `🛸 **Pre-Inspection Drone Flights for ${locationName}:**\n${lines.map((l) => `• ${l}`).join('\n')}\n\nAll routes are planned from the Ground Station launch base (Pi Portal: 19.0760° N, 72.8777° E).`
+      : `No pre-inspection drone flights required for **${locationName}** on ${analysis.date}: all 250m cells remain below CPCB action thresholds.`;
+  }
+
+  // -2. Multimodal Synthesis (XGBoost Prediction + OpenCV DCP Haze Data)
+  if (/haze|dcp|opencv|camera|optics|scatter|transmission/.test(q)) {
+    if (analysis && analysis.texts.haze) {
+      return `🌫️ **Multimodal Fusion Analysis (XGBoost NO₂ + OpenCV DCP Haze):**\n\n${analysis.texts.haze}\n\n• **Core Principle:** In clean air, the dark channel of outdoor RGB images is near zero (He et al., 2009). Aerosols lift this intensity towards sky brightness. Estimating transmission *t(x)* distinguishes:\n  1. **Combustion Smog:** High NO₂ + Dense Haze (primary NOx combined with heavy secondary aerosol scattering).\n  2. **Invisible Gas Plume:** High NO₂ + Clear Air (toxic gaseous plume invisible to optical cameras, requiring electrochemical / satellite downscaling verification).\n  3. **Meteorological Obstruction:** Low NO₂ + Dense Haze (coastal marine fog, mineral dust, or humidity inversion).\n  4. **Clean Baseline:** Low NO₂ + Clear Air.`;
+    }
+    return `**Multimodal Air Quality Assessment:**\nAeroPulse fuses fine-scale **XGBoost satellite downscaled NO₂ predictions** with **OpenCV Dark Channel Prior (DCP) optical camera haze analysis**.\n\nClick **'Analyse Area'** to run this multimodal diagnostic on the latest satellite pass and drone camera telemetry.`;
+  }
 
   // 0. Suspicious / unusual activity
   if (/suspicious|unusual|anomal|spike|illegal|violation/.test(q)) {

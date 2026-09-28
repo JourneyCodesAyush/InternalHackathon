@@ -447,12 +447,27 @@ def _haze_summary() -> dict | None:
 
 
 def _flight_plans(run_dir: Path, facts: dict) -> list[dict]:
-    from .flightplan import plans_for
+    from .flightplan import plans_for, route_map_data_uri
+    from .pdf import _colourise
 
     static_path = run_dir / "static_fine.nc"
     static = xr.load_dataset(static_path, engine="h5netcdf") if static_path.exists() else None
     latest = (facts.get("haze") or {}).get("latest")
-    return plans_for(facts, static, facts.get("grid"), latest)
+    plans = plans_for(facts, static, facts.get("grid"), latest)
+    surface_map = facts.get("surface_map")
+    grid = facts.get("grid")
+    water_mask = facts.get("water_mask")
+    for p in plans:
+        try:
+            p["map_data_uri"] = route_map_data_uri(p, surface_map, grid, _colourise, water=water_mask)
+        except Exception:
+            p["map_data_uri"] = None
+        if p.get("relocation"):
+            try:
+                p["relocation"]["map_data_uri"] = route_map_data_uri(p["relocation"], surface_map, grid, _colourise, water=water_mask)
+            except Exception:
+                p["relocation"]["map_data_uri"] = None
+    return plans
 
 
 def _compute_facts(run_dir: Path, date: str, area_name: str = "") -> dict:
