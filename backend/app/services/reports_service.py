@@ -141,7 +141,7 @@ async def generate_report(
 
 async def chat_answer(question: str, context: dict, language: str = "en", history: Optional[list] = None) -> dict:
     """Gemini's answer to a typed question from the AI model's output for the area (``answer`` is None when
-    AI is unavailable; the page then answers from its templates)."""
-    answer = await asyncio.to_thread(answer_question, question, context, language, history or [],
-                                     settings.GEMINI_API_KEY)
-    return {"answer": answer, "source": "ai" if answer else "none"}
+    AI is unavailable; the page then answers from its templates; ``source`` is ai / guardrail / none)."""
+    answer, source = await asyncio.to_thread(answer_question, question, context, language, history or [],
+                                             settings.GEMINI_API_KEY)
+    return {"answer": answer, "source": source}

@@ -16,6 +16,14 @@ import {
   RotateCcw,
   Activity,
   Send,
+  Stethoscope,
+  ShieldCheck,
+  Factory,
+  Clock,
+  TrendingDown,
+  Users,
+  Plane,
+  type LucideIcon,
 } from 'lucide-react';
 
 import DatePicker from '../visualization/_components/DatePicker';
@@ -338,7 +346,7 @@ function AnalysisPanel({ a }: { a: Analysis }) {
 
 interface PredefinedQuestion {
   id: string;
-  icon: string;
+  icon: LucideIcon;
   label: string;
   query: string;
 }
@@ -347,17 +355,17 @@ interface PredefinedQuestion {
 const PREDEFINED_QUESTIONS: PredefinedQuestion[] = [
   {
     id: 'fullcheck',
-    icon: '🩻',
+    icon: Stethoscope,
     label: 'Full check at this spot',
     query: 'What is the NO₂ level here, is it dangerous by WHO standards, how will it change, what does this exposure do to me, how should I protect my health, and what is the main contributor?',
   },
-  { id: 'standards', icon: '🛡️', label: 'Within CPCB & WHO limits?', query: 'Is the air here within the CPCB and WHO limits?' },
-  { id: 'hotspots', icon: '🏭', label: 'Hotspots & their causes', query: 'Where are the NO₂ hotspots and what is causing them?' },
-  { id: 'unusual', icon: '🚨', label: 'Suspicious / unusual activity', query: 'Is there any suspicious or unusual pollution activity?' },
-  { id: 'forecast', icon: '📈', label: 'Next 24 hours', query: 'What will NO₂ do over the next 24 hours?' },
-  { id: 'trend', icon: '📉', label: 'Getting better or worse?', query: 'Is pollution here getting better or worse?' },
-  { id: 'exposure', icon: '🩺', label: 'People exposed & precautions', query: 'How many people are exposed and what precautions should they take?' },
-  { id: 'drone', icon: '🛸', label: 'Drone inspection needed?', query: 'Does any site here need a drone inspection before officials visit?' },
+  { id: 'standards', icon: ShieldCheck, label: 'Within CPCB & WHO limits?', query: 'Is the air here within the CPCB and WHO limits?' },
+  { id: 'hotspots', icon: Factory, label: 'Hotspots & their causes', query: 'Where are the NO₂ hotspots and what is causing them?' },
+  { id: 'unusual', icon: AlertTriangle, label: 'Suspicious / unusual activity', query: 'Is there any suspicious or unusual pollution activity?' },
+  { id: 'forecast', icon: Clock, label: 'Next 24 hours', query: 'What will NO₂ do over the next 24 hours?' },
+  { id: 'trend', icon: TrendingDown, label: 'Getting better or worse?', query: 'Is pollution here getting better or worse?' },
+  { id: 'exposure', icon: Users, label: 'People exposed & precautions', query: 'How many people are exposed and what precautions should they take?' },
+  { id: 'drone', icon: Plane, label: 'Drone inspection needed?', query: 'Does any site here need a drone inspection before officials visit?' },
 ];
 
 interface ChatMessage {
@@ -526,7 +534,7 @@ function fullCheckAnswer(
           : `**Dangerous** — ${who.toFixed(1)}× the WHO guideline and far above the CPCB limit.`;
   const peak = pc.horizons.reduce((m, h) => Math.max(m, h.no2), v);
   const forecast = pc.horizons
-    .map((h) => `+${h.hours} h: **${h.no2.toFixed(0)}**${h.no2 > 25 ? '' : ' ✓'}`)
+    .map((h) => `+${h.hours} h: **${h.no2.toFixed(0)}**`)
     .join(' · ');
   const direction =
     peak > v * 1.1 ? 'rising over the coming hours' : pc.horizons.at(-1)!.no2 < v * 0.9 ? 'easing over the day' : 'roughly steady';
@@ -799,7 +807,7 @@ The analysis runs automatically with your first question.`,
         {
           id: `analyzed-${Date.now()}`,
           sender: 'agent',
-          text: `📊 **Fresh Satellite Analysis Completed for ${locationName}**!
+          text: `**Fresh Satellite Analysis Completed for ${locationName}**!
 • Area Average NO₂: **${data.current.mean.toFixed(0)} µg/m³** (${data.labels.status.toUpperCase()})
 • CPCB 24-h NAAQS: ${Math.abs(data.current.pct_vs_naaqs).toFixed(0)}% ${
             data.current.pct_vs_naaqs > 0 ? 'above' : 'below'
@@ -1168,7 +1176,7 @@ The analysis runs automatically with your first question.`,
                   disabled={isTyping}
                   className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#181d2a] hover:bg-blue-600/20 border border-[#2e3547] hover:border-blue-500/50 text-[11px] text-zinc-300 hover:text-blue-200 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed group"
                 >
-                  <span className="text-xs group-hover:scale-110 transition-transform">{q.icon}</span>
+                  <q.icon className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
                   <span className="font-medium">{q.label}</span>
                 </button>
               ))}

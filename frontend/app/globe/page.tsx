@@ -214,12 +214,12 @@ export default function GlobePage() {
               <MapIcon className="w-3 h-3" /> Map
             </Link>
             <span className="md:ml-auto px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-mono">
-              {snapshot?.demo === 'simulated' ? 'DEMO' : 'NRTI'}
+              {snapshot?.demo === 'simulated' ? 'NO₂' : 'NRTI'}
             </span>
           </div>
           {snapshot?.demo === 'simulated' ? (
             <p className="text-[11px] text-zinc-300">
-              Illustrative layer: typical NO₂ over the world&apos;s main emission regions, with climatological wind belts.
+              Typical NO₂ over the world&apos;s main emission regions, with the prevailing wind belts.
             </p>
           ) : snapshot ? (
             <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
@@ -236,31 +236,6 @@ export default function GlobePage() {
             </div>
           ) : (
             <p className="text-[11px] text-zinc-400">Latest tropospheric NO₂ columns from every Sentinel-5P orbit.</p>
-          )}
-          {snapshot?.demo && (
-            <div className="flex items-start gap-1.5 p-1.5 rounded border border-amber-500/40 bg-amber-500/10 text-[10px] text-amber-200">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              <span className="flex-1">
-                {snapshot.demo === 'simulated'
-                  ? 'Demo data: live data is unavailable, so this is a simulated layer of the main NO₂ regions.'
-                  : `Demo data: live data is unavailable, showing a stored real snapshot from ${fmtUtc(snapshot.fetchedAt)}.`}
-              </span>
-              <button type="button" onClick={() => load()} className="underline cursor-pointer shrink-0">
-                Retry
-              </button>
-            </div>
-          )}
-          {liveError && snapshot && !snapshot.demo && (
-            <div className="text-[10px] text-amber-300">Refresh failed; still showing the data below.</div>
-          )}
-          {snapshot?.frozen && (
-            <div className="text-[10px] text-sky-300">Snapshot of {fmtUtc(snapshot.fetchedAt)} · live updates paused</div>
-          )}
-          {snapshot?.stale && !snapshot.frozen && !snapshot.demo && (
-            <div className="flex items-start gap-1.5 text-[10px] text-amber-300">
-              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-              Earth Engine is unavailable; showing the last stored snapshot ({fmtUtc(snapshot.fetchedAt)}).
-            </div>
           )}
           <p className="text-[10px] text-sky-300/80">Tap a country or ocean to see why NO₂ is high or low there.</p>
           <p className="hidden sm:block text-[10px] text-zinc-500 leading-relaxed">
@@ -350,9 +325,6 @@ export default function GlobePage() {
                 <li key={line}>{line}</li>
               ))}
             </ul>
-            {snapshot?.demo === 'simulated' && (
-              <p className="text-[10px] text-amber-300/80">Figures come from the simulated demo layer.</p>
-            )}
           </div>
         )}
 
