@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
+import zlib
 from typing import Any, Sequence
 
 import numpy as np
@@ -21,6 +22,24 @@ from .impact import ImpactComparison, compute_impact
 from .scenarios import PRESET_SCENARIOS, SimulationScenario
 
 log = logging.getLogger(__name__)
+
+
+def _facility_plume(xx: np.ndarray, yy: np.ndarray, row: int, col: int, wind_angle: float,
+                    wind_speed: float) -> np.ndarray:
+    """Normalised (peak 1) footprint of a point source at (row, col): a sharp core at the stack plus an
+    anisotropic plume stretched downwind, widening with distance and decaying over a few cells.
+    ``wind_angle`` is the direction the wind blows towards (radians, from east, counter-clockwise);
+    rows grow southward. Stronger wind carries the plume further and makes it narrower."""
+    ux, uy = math.cos(wind_angle), -math.sin(wind_angle)  # grid axes: +col east, +row south
+    dx = xx - col
+    dy = yy - row
+    along = dx * ux + dy * uy
+    cross = -dx * uy + dy * ux
+    reach = 3.0 + 1.2 * min(max(wind_speed, 0.5), 6.0)  # e-folding length downwind (cells)
+    width = 0.7 + 0.22 * np.maximum(along, 0.0) * (3.0 / max(wind_speed, 1.0)) ** 0.3
+    downwind = np.where(along > 0, np.exp(-along / reach) * np.exp(-(cross ** 2) / (2 * width ** 2)), 0.0)
+    core = np.exp(-(dx ** 2 + dy ** 2) / (2 * 0.9 ** 2))
+    return np.maximum(core, downwind).astype(np.float32)
 
 
 class ScenarioSimulator:
@@ -117,21 +136,23 @@ class ScenarioSimulator:
                 default_coords.update(facility_positions)
 
             yy, xx = np.mgrid[0:H, 0:W]
-            sigma = max(1.5, H / 12.0)
+            # scenario wind (after the speed / direction levers), used to orient each facility's plume
+            ang = np.arctan2(wind_v, wind_u) + math.radians(scenario.wind_direction_delta_deg)
+            spd = np.hypot(wind_u, wind_v) * scenario.wind_speed_factor
 
             for node_id, factor in scenario.node_overrides.items():
                 target_pos = default_coords.get(node_id)
                 if not target_pos:
-                    # Hash node_id to a deterministic coordinate inside domain
-                    h_val = abs(hash(node_id))
+                    # stable position for an unmapped node (Python's hash() changes on every restart)
+                    h_val = zlib.crc32(node_id.encode())
                     target_pos = (int((h_val % (H - 4)) + 2), int(((h_val // 13) % (W - 4)) + 2))
 
-                r_pos, c_pos = target_pos
-                local_base = float(c0[r_pos, c_pos])
-                # Gaussian kernel around facility
-                kernel = np.exp(-((xx - c_pos) ** 2 + (yy - r_pos) ** 2) / (2 * (sigma ** 2)))
-                delta_node = (factor - 1.0) * local_base * 0.65 * kernel
-                c_anthro_mod += delta_node
+                r_pos, c_pos = (int(np.clip(target_pos[0], 0, H - 1)), int(np.clip(target_pos[1], 0, W - 1)))
+                kernel = _facility_plume(xx, yy, r_pos, c_pos, float(ang[r_pos, c_pos]), float(spd[r_pos, c_pos]))
+                # the facility's own share of the local concentration (at least 20 µg/m³, so a small site still
+                # responds): doubling a factory roughly doubles its plume, switching it off removes it
+                local_share = max(20.0, float(c_anthro[r_pos, c_pos]))
+                c_anthro_mod += (factor - 1.0) * local_share * 1.2 * kernel
 
         # Ensure no negative concentration
         c_anthro_mod = np.maximum(0.0, c_anthro_mod)

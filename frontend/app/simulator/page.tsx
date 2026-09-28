@@ -42,6 +42,7 @@ import {
 import Navbar from '../components/Navbar';
 import { loadGoogleMaps, DARK_MAP_STYLES } from '@/lib/googleMaps';
 import { createNO2HeatmapOverlay, INO2HeatmapOverlay } from '../components/NO2HeatmapOverlay';
+import DatePicker from '../visualization/_components/DatePicker';
 import { PRESET_REGIONS, KNOWN_POIS } from '@/lib/constants';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -125,6 +126,61 @@ interface XAIData {
   confidence?: number;
 }
 
+/** One KPI of the bottom bar: small label, then the value with its unit, and a change chip that never wraps. */
+function KpiCard({
+  label,
+  value,
+  unit,
+  change,
+  good,
+  note,
+  status,
+  statusText,
+}: {
+  label: string;
+  value?: string;
+  unit?: string;
+  change?: string;
+  good?: boolean;
+  note?: string;
+  status?: 'ok' | 'warn' | 'bad';
+  statusText?: string;
+}) {
+  const statusStyle =
+    status === 'ok'
+      ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/30'
+      : status === 'warn'
+        ? 'text-amber-300 bg-amber-500/10 border-amber-500/30'
+        : 'text-rose-300 bg-rose-500/10 border-rose-500/30';
+  const StatusIcon = status === 'ok' ? CheckCircle2 : status === 'warn' ? AlertTriangle : XCircle;
+  return (
+    <div className="flex-1 basis-[9.5rem] min-w-[9.5rem] px-2.5 py-1.5 rounded-lg bg-[#0d1017]/70 border border-[#242938] space-y-1">
+      <div className="text-[10px] uppercase font-mono text-zinc-400 truncate">{label}</div>
+      {status ? (
+        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-mono font-bold whitespace-nowrap ${statusStyle}`}>
+          <StatusIcon className="w-3.5 h-3.5 shrink-0" />
+          {statusText}
+        </span>
+      ) : (
+        <div className="flex items-baseline gap-1.5 min-w-0">
+          <span className="text-base font-bold font-mono text-white whitespace-nowrap">{value}</span>
+          {unit && <span className="text-[10px] text-zinc-400 shrink-0">{unit}</span>}
+          {change && (
+            <span
+              className={`ml-auto shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold whitespace-nowrap ${
+                good ? 'text-emerald-300 bg-emerald-500/10' : 'text-rose-300 bg-rose-500/10'
+              }`}
+            >
+              {change}
+            </span>
+          )}
+          {note && <span className="ml-auto shrink-0 text-[10px] font-mono text-zinc-400 whitespace-nowrap">{note}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SimulatorPage() {
   // Region state
   const [selectedRegionIndex, setSelectedRegionIndex] = useState(0);
@@ -133,6 +189,9 @@ export default function SimulatorPage() {
   // Date selection state
   const [availableDates, setAvailableDates] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>('2025-11-05');
+  // [west, south, east, north] of the simulated grid, from the backend (the uploaded raster's extent)
+  const [gridBounds, setGridBounds] = useState<[number, number, number, number] | null>(null);
+  const simRunRef = useRef(0);
 
   // Map state
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -401,6 +460,9 @@ export default function SimulatorPage() {
       date: string;
       facilityOverrides: FacilityNode[];
     }>) => {
+      // only the newest run may update the page: an older one finishing late (e.g. the previous date,
+      // or an earlier slider position) must not overwrite it
+      const runId = ++simRunRef.current;
       setIsSimulating(true);
       const wSpeed = overrides?.windSpeed ?? windSpeed;
       const wDir = overrides?.windDir ?? windDirection;
@@ -441,22 +503,25 @@ export default function SimulatorPage() {
               id: f.id,
               name: f.name,
               emission_factor: f.active ? f.emissionFactor : 0.0,
+              coordinates: f.coordinates,
             })),
           }),
         });
 
         if (res.ok) {
           const data = await res.json();
+          if (runId !== simRunRef.current) return;
           if (data.impact) setImpactData(data.impact);
           if (data.xai) setXaiData(data.xai);
           if (data.hotspots) setHotspots(data.hotspots);
           if (data.baseline_grid) setBaselineGrid(data.baseline_grid);
           if (data.simulated_grid) setSimulatedGrid(data.simulated_grid);
+          if (Array.isArray(data.bounds) && data.bounds.length === 4) setGridBounds(data.bounds);
         }
       } catch (err) {
         console.warn('Simulator run error, relying on responsive physical fallbacks:', err);
       } finally {
-        setIsSimulating(false);
+        if (runId === simRunRef.current) setIsSimulating(false);
       }
     },
     [
@@ -499,7 +564,7 @@ export default function SimulatorPage() {
       }
     }
 
-    const bbox: [number, number, number, number] = [
+    const bbox: [number, number, number, number] = gridBounds ?? [
       currentRegion.center[1] - 0.18,
       currentRegion.center[0] - 0.15,
       currentRegion.center[1] + 0.18,
@@ -514,6 +579,7 @@ export default function SimulatorPage() {
           height: H,
           bbox,
           opacity: 0.82,
+          palette: 'vivid', // exceedances above 80 µg/m³ turn red, >160 deep red / purple
         });
         overlay.setMap(map);
         heatmapOverlayRef.current = overlay;
@@ -528,7 +594,7 @@ export default function SimulatorPage() {
         bbox,
       });
     }
-  }, [simulatedGrid, baselineGrid, viewMode, currentRegion]);
+  }, [simulatedGrid, baselineGrid, viewMode, currentRegion, gridBounds]);
 
   // Render Suspicious & Hazard Markers on Map
   useEffect(() => {
@@ -790,24 +856,13 @@ export default function SimulatorPage() {
           <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-zinc-300 border-l border-zinc-700/60 pl-3">
             <Calendar className="w-3.5 h-3.5 text-blue-400" />
             <span>Date:</span>
-            <select
-              value={selectedDate}
-              onChange={(e) => {
-                setSelectedDate(e.target.value);
-                executeSimulation({ date: e.target.value });
-              }}
-              className="bg-[#181d2a] border border-[#2e374c] rounded px-2 py-0.5 text-xs text-white outline-none focus:border-blue-500 font-mono"
-            >
-              {availableDates.length > 0 ? (
-                availableDates.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))
-              ) : (
-                <option value="2025-11-05">2025-11-05</option>
-              )}
-            </select>
+            <DatePicker
+              availableDates={availableDates.length > 0 ? availableDates : [selectedDate]}
+              selectedDate={selectedDate}
+              onDateChange={setSelectedDate} // the date effect re-runs the simulation once
+              isLoading={isSimulating}
+              variant="inline"
+            />
           </div>
         </div>
 
@@ -1390,95 +1445,44 @@ export default function SimulatorPage() {
             </div>
           )}
 
-          {/* Bottom Live KPI Bar */}
-          <div className="absolute bottom-4 left-4 right-4 z-10 p-3 rounded-xl bg-[#11141d]/90 backdrop-blur-md border border-[#242938] shadow-2xl grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            <div className="space-y-0.5">
-              <span className="text-[10px] uppercase font-mono text-zinc-400">Peak NO₂</span>
-              <div className="text-base font-bold font-mono text-white flex items-center gap-1">
-                <span>{impactData.simulated_peak_no2.toFixed(1)}</span>
-                <span className="text-[10px] text-zinc-400 font-sans">µg/m³</span>
-                <span
-                  className={`text-xs font-mono ml-1 ${
-                    impactData.peak_no2_change_pct <= 0 ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  ({impactData.peak_no2_change_pct > 0 ? '+' : ''}
-                  {impactData.peak_no2_change_pct.toFixed(1)}%)
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-0.5">
-              <span className="text-[10px] uppercase font-mono text-zinc-400">Area Average</span>
-              <div className="text-base font-bold font-mono text-white flex items-center gap-1">
-                <span>{impactData.simulated_mean_no2.toFixed(1)}</span>
-                <span className="text-[10px] text-zinc-400 font-sans">µg/m³</span>
-                <span
-                  className={`text-xs font-mono ml-1 ${
-                    impactData.mean_no2_change_pct <= 0 ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  ({impactData.mean_no2_change_pct > 0 ? '+' : ''}
-                  {impactData.mean_no2_change_pct.toFixed(1)}%)
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-0.5">
-              <span className="text-[10px] uppercase font-mono text-zinc-400">Exposed Population</span>
-              <div className="text-base font-bold font-mono text-white flex items-center gap-1">
-                <span>{impactData.simulated_exposed_pop.toLocaleString()}</span>
-                <span
-                  className={`text-xs font-mono ml-1 ${
-                    impactData.exposed_pop_change <= 0 ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  ({impactData.exposed_pop_change > 0 ? '+' : ''}
-                  {impactData.exposed_pop_change.toLocaleString()})
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-0.5">
-              <span className="text-[10px] uppercase font-mono text-zinc-400">Plume Shift</span>
-              <div className="text-base font-bold font-mono text-white flex items-center gap-1">
-                <span>{impactData.plume_displacement_km.toFixed(2)}</span>
-                <span className="text-[10px] text-zinc-400 font-sans">km</span>
-                <span className="text-[10px] text-zinc-400 font-mono ml-1">
-                  @{impactData.plume_heading_deg.toFixed(0)}°
-                </span>
-              </div>
-            </div>
-
-            <div className="space-y-0.5">
-              <span className="text-[10px] uppercase font-mono text-zinc-400">CPCB Compliance</span>
-              <div className="text-xs font-mono font-bold flex items-center gap-1 pt-0.5">
-                {impactData.simulated_peak_no2 <= 80 ? (
-                  <span className="text-emerald-400 flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> COMPLIANT
-                  </span>
-                ) : (
-                  <span className="text-rose-400 flex items-center gap-1">
-                    <XCircle className="w-3.5 h-3.5" /> EXCEEDANCE
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="space-y-0.5">
-              <span className="text-[10px] uppercase font-mono text-zinc-400">WHO Guideline</span>
-              <div className="text-xs font-mono font-bold flex items-center gap-1 pt-0.5">
-                {impactData.simulated_peak_no2 <= 25 ? (
-                  <span className="text-emerald-400 flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> COMPLIANT
-                  </span>
-                ) : (
-                  <span className="text-amber-400 flex items-center gap-1">
-                    <AlertTriangle className="w-3.5 h-3.5" /> EXCEEDED
-                  </span>
-                )}
-              </div>
-            </div>
+          {/* Bottom Live KPI Bar: one card per metric (label / value / change chip), never overlapping */}
+          <div className="absolute bottom-4 left-4 right-4 z-10 p-2 rounded-xl bg-[#11141d]/90 backdrop-blur-md border border-[#242938] shadow-2xl flex flex-wrap gap-2">
+            <KpiCard
+              label="Peak NO₂"
+              value={impactData.simulated_peak_no2.toFixed(1)}
+              unit="µg/m³"
+              change={`${impactData.peak_no2_change_pct > 0 ? '+' : ''}${impactData.peak_no2_change_pct.toFixed(1)}%`}
+              good={impactData.peak_no2_change_pct <= 0}
+            />
+            <KpiCard
+              label="Area Average"
+              value={impactData.simulated_mean_no2.toFixed(1)}
+              unit="µg/m³"
+              change={`${impactData.mean_no2_change_pct > 0 ? '+' : ''}${impactData.mean_no2_change_pct.toFixed(1)}%`}
+              good={impactData.mean_no2_change_pct <= 0}
+            />
+            <KpiCard
+              label="Exposed Population"
+              value={impactData.simulated_exposed_pop.toLocaleString()}
+              change={`${impactData.exposed_pop_change > 0 ? '+' : ''}${impactData.exposed_pop_change.toLocaleString()}`}
+              good={impactData.exposed_pop_change <= 0}
+            />
+            <KpiCard
+              label="Plume Shift"
+              value={impactData.plume_displacement_km.toFixed(2)}
+              unit="km"
+              note={`@${impactData.plume_heading_deg.toFixed(0)}°`}
+            />
+            <KpiCard
+              label="CPCB Compliance"
+              status={impactData.simulated_peak_no2 <= 80 ? 'ok' : 'bad'}
+              statusText={impactData.simulated_peak_no2 <= 80 ? 'COMPLIANT' : 'EXCEEDANCE'}
+            />
+            <KpiCard
+              label="WHO Guideline"
+              status={impactData.simulated_peak_no2 <= 25 ? 'ok' : 'warn'}
+              statusText={impactData.simulated_peak_no2 <= 25 ? 'COMPLIANT' : 'EXCEEDED'}
+            />
           </div>
         </main>
 

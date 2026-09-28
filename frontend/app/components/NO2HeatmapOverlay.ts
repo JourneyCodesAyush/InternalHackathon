@@ -6,29 +6,44 @@ export interface NO2HeatmapOverlayOptions {
   height: number;
   bbox: [number, number, number, number]; // [minLng, minLat, maxLng, maxLat]
   opacity?: number;
+  /** 'cpcb' (default, home map): 0-320 µg/m³ hazard scale. 'vivid' (simulator): standard AQI steps
+   * capped at 200 µg/m³, so exceedances above the CPCB limit (80) turn red and >160 deep red/purple. */
+  palette?: HeatmapPalette;
 }
 
-// CPCB hazard-based atmospheric NO₂ color gradient (0 to 320 µg/m³)
-// Green (0-40), Yellow (40-80), Orange (80-180), Red (180-280), Purple (>280)
-const CPCB_COLOR_SCALE = chroma
-  .scale(['#10b981', '#facc15', '#f97316', '#ef4444', '#9333ea'])
-  .domain([0, 40, 80, 180, 320])
-  .mode('lab');
+export type HeatmapPalette = 'cpcb' | 'vivid';
 
-const MAX_NO2_LUT = 320.0;
-
-// Precomputed 256-color lookup table for fast RGBA rendering
-const COLOR_LUT = new Uint8ClampedArray(256 * 4);
-for (let i = 0; i < 256; i++) {
-  const value = (i / 255.0) * MAX_NO2_LUT;
-  const rgb = CPCB_COLOR_SCALE(value).rgb();
-  const offset = i * 4;
-  COLOR_LUT[offset] = rgb[0];
-  COLOR_LUT[offset + 1] = rgb[1];
-  COLOR_LUT[offset + 2] = rgb[2];
-  const alpha = value < 20 ? Math.round(140 + (value / 20) * 65) : 215;
-  COLOR_LUT[offset + 3] = alpha;
+// Colour lookup tables (256 steps) for fast RGBA rendering.
+interface Palette {
+  lut: Uint8ClampedArray;
+  max: number;
 }
+
+function buildPalette(colours: string[], domain: number[], max: number): Palette {
+  const scale = chroma.scale(colours).domain(domain).mode('lab');
+  const lut = new Uint8ClampedArray(256 * 4);
+  for (let i = 0; i < 256; i++) {
+    const value = (i / 255.0) * max;
+    const rgb = scale(value).rgb();
+    const offset = i * 4;
+    lut[offset] = rgb[0];
+    lut[offset + 1] = rgb[1];
+    lut[offset + 2] = rgb[2];
+    lut[offset + 3] = value < 20 ? Math.round(140 + (value / 20) * 65) : 215;
+  }
+  return { lut, max };
+}
+
+const PALETTES: Record<HeatmapPalette, Palette> = {
+  // CPCB hazard-based gradient (0 to 320 µg/m³): green 0-40, yellow 40-80, orange 80-180, red 180-280, purple >280
+  cpcb: buildPalette(['#10b981', '#facc15', '#f97316', '#ef4444', '#9333ea'], [0, 40, 80, 180, 320], 320),
+  // AQI-style steps capped at 200 µg/m³: moderate exceedances go orange/red, extremes deep red/purple
+  vivid: buildPalette(
+    ['#10b981', '#eab308', '#f97316', '#ef4444', '#dc2626', '#9333ea'],
+    [0, 40, 80, 120, 160, 200],
+    200,
+  ),
+};
 
 export interface INO2HeatmapOverlay {
   setMap(map: any): void;
@@ -52,6 +67,7 @@ export function createNO2HeatmapOverlay(options: NO2HeatmapOverlayOptions): INO2
     private gridHeight: number;
     private bbox: [number, number, number, number];
     private opacity: number;
+    private palette: Palette;
 
     private containerDiv: HTMLDivElement | null = null;
     private displayCanvas: HTMLCanvasElement | null = null;
@@ -64,6 +80,7 @@ export function createNO2HeatmapOverlay(options: NO2HeatmapOverlayOptions): INO2
       this.gridHeight = opts.height;
       this.bbox = opts.bbox;
       this.opacity = opts.opacity ?? 0.75;
+      this.palette = PALETTES[opts.palette ?? 'cpcb'];
     }
 
     onAdd(): void {
@@ -103,16 +120,17 @@ export function createNO2HeatmapOverlay(options: NO2HeatmapOverlayOptions): INO2
       const imgData = ctx.createImageData(this.gridWidth, this.gridHeight);
       const data32 = new Uint32Array(imgData.data.buffer);
       const totalPixels = this.gridWidth * this.gridHeight;
+      const { lut, max } = this.palette;
 
       for (let i = 0; i < totalPixels; i++) {
         const val = this.no2[i];
-        const lutIndex = Math.max(0, Math.min(255, Math.round((val / MAX_NO2_LUT) * 255)));
+        const lutIndex = Math.max(0, Math.min(255, Math.round((val / max) * 255)));
         const offset = lutIndex * 4;
 
-        const r = COLOR_LUT[offset];
-        const g = COLOR_LUT[offset + 1];
-        const b = COLOR_LUT[offset + 2];
-        const a = COLOR_LUT[offset + 3];
+        const r = lut[offset];
+        const g = lut[offset + 1];
+        const b = lut[offset + 2];
+        const a = lut[offset + 3];
 
         // Little-endian packed ABGR
         data32[i] = (a << 24) | (b << 16) | (g << 8) | r;

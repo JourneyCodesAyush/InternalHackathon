@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from scipy import ndimage
 
 from app.dependencies import get_current_user
+from app.services import upload_data
 from app.models.simulator import SimulatorReportRequest, SimulatorRunRequest
 from ml_engine.report.pdf import build_simulation_report_pdf
 from ml_engine.simulator import (
@@ -30,7 +31,33 @@ log = logging.getLogger("simulator.api")
 router = APIRouter()
 
 
-def _load_baseline_raster(target_date: str | None, H: int = 28, W: int = 28) -> tuple[np.ndarray, str]:
+def _parse_bbox(bbox: str) -> tuple[float, float, float, float]:
+    try:
+        w, s_, e, n = (float(v) for v in bbox.split(","))
+        return w, s_, e, n
+    except ValueError:
+        return 72.77, 18.88, 73.12, 19.32
+
+
+def _grid_positions(nodes, bounds: tuple[float, float, float, float], H: int, W: int) -> dict[str, tuple[int, int]]:
+    """(row, col) of each node that has [lat, lon] coordinates inside ``bounds`` (rows run north to south)."""
+    west, south, east, north = bounds
+    out: dict[str, tuple[int, int]] = {}
+    for node in nodes:
+        if not node.coordinates or len(node.coordinates) < 2:
+            continue
+        lat, lon = float(node.coordinates[0]), float(node.coordinates[1])
+        if not (west <= lon <= east and south <= lat <= north):
+            continue
+        row = int(min(H - 1, (north - lat) / (north - south) * H))
+        col = int(min(W - 1, (lon - west) / (east - west) * W))
+        out[node.id] = (row, col)
+    return out
+
+
+def _load_baseline_raster(
+    target_date: str | None, H: int = 28, W: int = 28
+) -> tuple[np.ndarray, str, tuple[float, float, float, float] | None]:
     """Load baseline NO2 raster from uploaded GeoTIFF test data or synthesize physically authentic MMR field."""
     test_data_dir = Path("data/test_data")
     if not test_data_dir.exists():
@@ -65,6 +92,8 @@ def _load_baseline_raster(target_date: str | None, H: int = 28, W: int = 28) -> 
         try:
             with rasterio.open(tif_file) as src:
                 arr = src.read(1).astype(np.float32)
+                b = src.bounds
+                bounds = (float(b.left), float(b.bottom), float(b.right), float(b.top))
                 if np.isnan(arr).all():
                     arr = np.full((H, W), 45.0, dtype=np.float32)
                 else:
@@ -76,7 +105,7 @@ def _load_baseline_raster(target_date: str | None, H: int = 28, W: int = 28) -> 
                         zoom_y = H / arr.shape[0]
                         zoom_x = W / arr.shape[1]
                         arr = ndimage.zoom(arr, (zoom_y, zoom_x), order=1).astype(np.float32)
-                return arr, resolved_date
+                return arr, resolved_date, bounds
         except Exception as e:
             log.warning("Could not open GeoTIFF %s: %s", tif_file, e)
 
@@ -90,7 +119,7 @@ def _load_baseline_raster(target_date: str | None, H: int = 28, W: int = 28) -> 
         + 46.0 * np.exp(-((xx + 0.6) ** 2 + (yy + 0.5) ** 2) / 0.50)
         + 35.0 * np.exp(-((xx - 0.7) ** 2 + (yy + 0.4) ** 2) / 0.25)
     ).astype(np.float32)
-    return base_field, resolved_date
+    return base_field, resolved_date, None
 
 
 @router.get(
@@ -164,11 +193,19 @@ async def run_simulation(
 
     # 2. Load baseline raster (preserves uploaded GeoTIFF or authentic historical observation)
     H, W = 28, 28
-    base_field, resolved_date = _load_baseline_raster(body.observation_date, H=H, W=W)
+    base_field, resolved_date, raster_bounds = _load_baseline_raster(body.observation_date, H=H, W=W)
+    bounds = raster_bounds or _parse_bbox(body.bbox)
 
-    # Base meteorological wind field (2.5 m/s eastward, 1.8 m/s northward)
-    wind_u = np.full((H, W), 2.5, dtype=np.float32)
-    wind_v = np.full((H, W), 1.8, dtype=np.float32)
+    # Wind at the satellite overpass (~13:30 local) from the same wind cycle Plume Flow and the forecast use
+    try:
+        wind_u, wind_v = (np.asarray(a, dtype=np.float32) for a in upload_data.plume_wind(13.5, (H, W)))
+    except Exception as e:  # noqa: BLE001 - keep the simulator usable without it
+        log.warning("Plume wind unavailable (%s); using a light south-westerly", e)
+        wind_u = np.full((H, W), 2.5, dtype=np.float32)
+        wind_v = np.full((H, W), 1.8, dtype=np.float32)
+
+    # Facilities at their real map positions on the simulation grid
+    facility_positions = _grid_positions(body.node_overrides, bounds, H, W)
 
     # 3. Execute atmospheric physics simulation
     simulator = ScenarioSimulator()
@@ -180,6 +217,7 @@ async def run_simulation(
         hours=4,
         dx=250.0,
         dy=250.0,
+        facility_positions=facility_positions,
     )
 
     # 4. Generate Live SHAP Explainability for the peak hotspot
@@ -310,7 +348,7 @@ async def run_simulation(
         "region_name": body.region_name,
         "observation_date": resolved_date,
         "grid_shape": [H, W],
-        "bounds": [72.77, 18.88, 73.12, 19.32],
+        "bounds": list(bounds),
         "baseline_grid": c_base.tolist(),
         "simulated_grid": c_sim.tolist(),
         "impact": impact.to_dict(),
