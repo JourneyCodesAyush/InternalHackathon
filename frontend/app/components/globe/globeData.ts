@@ -1,8 +1,8 @@
-import { feature, mesh } from 'topojson-client';
+import { feature } from 'topojson-client';
 import type { GeometryCollection, Topology } from 'topojson-specification';
 import type { MultiPolygon, Polygon, Position } from 'geojson';
 import landTopo from 'world-atlas/land-110m.json';
-import countriesTopo from 'world-atlas/countries-110m.json';
+import { countryRings } from './countries';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -148,12 +148,10 @@ export function drawBaseMap(width = 4096): { base: HTMLCanvasElement; lines: HTM
     }
   }
 
-  const countries = countriesTopo as unknown as Topology;
-  const borders = mesh(countries, countries.objects.countries as GeometryCollection, (a, b) => a !== b);
   lines.ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
   lines.ctx.lineWidth = 1.2;
   lines.ctx.beginPath();
-  for (const line of borders.coordinates) traceRing(lines.ctx, line);
+  for (const ring of countryRings()) traceRing(lines.ctx, ring); // India's official boundary (see countries.ts)
   lines.ctx.stroke();
   return { base: base.canvas, lines: lines.canvas };
 }
