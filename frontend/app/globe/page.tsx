@@ -78,14 +78,19 @@ export default function GlobePage() {
   const [showTransboundary, setShowTransboundary] = useState(false);
   const [transboundaryData, setTransboundaryData] = useState<TransboundaryResponse | null>(null);
   const [transboundaryLoading, setTransboundaryLoading] = useState(false);
+  const [activeRegion, setActiveRegion] = useState<string>('delhi');
 
-  const handleFocusRegion = useCallback((lat: number, lon: number, zoom = 8) => {
+  const handleFocusRegion = useCallback((lat: number, lon: number, zoom = 8.5) => {
     if (mode === '2d') {
       flatApi.current?.easeTo({ lat, lon, zoom }, 900);
     } else {
-      globeApi.current?.focus?.(lat, lon, 2.2);
+      globeApi.current?.focus?.(lat, lon, 1.6);
     }
   }, [mode]);
+
+  const handleSelectRegion = useCallback((regionId: string) => {
+    setActiveRegion(regionId);
+  }, []);
 
   /**
    * 3-D -> 2-D: the sphere unrolls into a Web-Mercator sheet around the current view, then the MapLibre map
@@ -204,7 +209,7 @@ export default function GlobePage() {
     if (!snapshot) return;
     let active = true;
     setTransboundaryLoading(true);
-    fetchTransboundaryFlux(24, 'delhi', undefined, snapshot)
+    fetchTransboundaryFlux(24, activeRegion, undefined, snapshot)
       .then((data) => {
         if (active) {
           setTransboundaryData(data);
@@ -217,7 +222,7 @@ export default function GlobePage() {
     return () => {
       active = false;
     };
-  }, [snapshot]);
+  }, [snapshot, activeRegion]);
 
   // Drift playback: advance the fractional frame index; loop after +12 h
   useEffect(() => {
@@ -291,6 +296,7 @@ export default function GlobePage() {
           autoRotate={autoRotate && !hover && !selected && mode === '3d' && !transitioning}
           showWind={showWind}
           fluxVectors={showTransboundary ? transboundaryData?.vectors : null}
+          gateways={showTransboundary ? (transboundaryData?.gateways || transboundaryData?.summary?.gateways) : null}
           showFlux={showTransboundary}
           onHover={onHover}
           onSelect={onSelect}
@@ -313,6 +319,7 @@ export default function GlobePage() {
               newestHours={NEWEST_HOURS}
               showWind={showWind && flatVisible}
               fluxVectors={showTransboundary ? transboundaryData?.vectors : null}
+              gateways={showTransboundary ? (transboundaryData?.gateways || transboundaryData?.summary?.gateways) : null}
               showFlux={showTransboundary}
               onHover={onHover}
               onSelect={onSelect}
@@ -328,19 +335,26 @@ export default function GlobePage() {
             type="button"
             onClick={() => setShowTransboundary((prev) => !prev)}
             aria-pressed={showTransboundary}
-            className={`flex items-center gap-1.5 h-8 px-3 rounded-full text-[11px] font-semibold transition-all border shadow-xl cursor-pointer backdrop-blur-md ${
+            className={`flex items-center gap-2.5 h-11 px-4 sm:px-5 rounded-2xl text-xs sm:text-sm font-bold tracking-wide transition-all border shadow-2xl cursor-pointer backdrop-blur-xl ${
               showTransboundary
-                ? 'bg-sky-500/25 border-sky-400 text-sky-200 ring-2 ring-sky-500/40 shadow-sky-500/10'
-                : 'bg-[#11141d]/90 border-[#2e3547] text-zinc-300 hover:border-sky-500/50 hover:text-white'
+                ? 'bg-sky-500/25 border-sky-400 text-sky-100 ring-2 ring-sky-500/50 shadow-sky-500/20'
+                : 'bg-[#0f1422]/95 border-[#2b354f] text-zinc-200 hover:border-sky-400/60 hover:text-white hover:bg-[#141b2e]'
             }`}
           >
-            <ShieldAlert className="w-3.5 h-3.5 text-sky-400" />
+            <div className="relative flex items-center justify-center">
+              <span className="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-sky-400 opacity-60"></span>
+              <ShieldAlert className="w-4 h-4 text-sky-400 relative z-10 shrink-0" />
+            </div>
             <span>Transboundary Flux</span>
-            {transboundaryData?.delhi_summary && (
-              <span className="px-1.5 py-0.5 rounded-full bg-sky-500/30 text-sky-200 font-mono text-[10px]">
-                {transboundaryData.delhi_summary.external_attribution_pct}% Ext
+            {transboundaryData?.summary ? (
+              <span className="px-2 py-0.5 rounded-lg bg-sky-500/25 border border-sky-400/30 text-sky-200 font-mono text-[11px] font-bold">
+                {transboundaryData.summary.external_attribution_pct}% Inflow
               </span>
-            )}
+            ) : transboundaryData?.delhi_summary ? (
+              <span className="px-2 py-0.5 rounded-lg bg-sky-500/25 border border-sky-400/30 text-sky-200 font-mono text-[11px] font-bold">
+                {transboundaryData.delhi_summary.external_attribution_pct}% Inflow
+              </span>
+            ) : null}
           </button>
         </div>
 
@@ -349,6 +363,8 @@ export default function GlobePage() {
           <TransboundaryPanel
             data={transboundaryData}
             loading={transboundaryLoading}
+            activeRegion={activeRegion}
+            onSelectRegion={handleSelectRegion}
             onClose={() => setShowTransboundary(false)}
             onFocusRegion={handleFocusRegion}
           />

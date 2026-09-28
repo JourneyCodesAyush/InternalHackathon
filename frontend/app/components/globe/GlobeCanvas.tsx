@@ -4,7 +4,7 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { drawBaseMap } from './globeData';
-import type { FluxVector } from './transboundaryData';
+import type { FluxVector, GatewayItem } from './transboundaryData';
 
 // Colour scale (log) in µmol/m²: clean background (~3-8) stays transparent, large polluted cities saturate.
 // 1 µmol/m² = 6.02e13 molecules/cm², so 8 ≈ 5e14 and 160 ≈ 1e16 molecules/cm².
@@ -36,6 +36,7 @@ interface GlobeCanvasProps {
   autoRotate: boolean;
   showWind: boolean;
   fluxVectors?: FluxVector[] | null;
+  gateways?: GatewayItem[] | null;
   showFlux?: boolean;
   onHover: (info: HoverInfo | null) => void;
   /** A tap (not a drag) on the globe, or null for a tap on empty space. */
@@ -224,6 +225,7 @@ export default function GlobeCanvas({
   autoRotate,
   showWind,
   fluxVectors,
+  gateways,
   showFlux,
   onHover,
   onSelect,
@@ -540,11 +542,18 @@ export default function GlobeCanvas({
           active = on;
         },
         zoomRange: (lat) => [zoomFor(MAX_DISTANCE, lat), zoomFor(MIN_DISTANCE + 0.25, lat)],
-        focus: (lat, lon, distance = 2.4) => {
+        focus: async (lat, lon, distance = 1.6) => {
           const target = toXYZ(lat, lon, distance, new THREE.Vector3());
+          const from = camera.position.clone();
+          controls.enabled = false;
+          await animate(650, (t) => {
+            camera.position.lerpVectors(from, target, t);
+            camera.lookAt(0, 0, 0);
+          });
           camera.position.copy(target);
           controls.target.set(0, 0, 0);
           controls.update();
+          controls.enabled = true;
           lastInteraction = performance.now();
         },
       };
@@ -638,7 +647,7 @@ export default function GlobeCanvas({
   useEffect(() => {
     const s = sceneRef.current;
     if (!s) return;
-    if (!showFlux || !fluxVectors || fluxVectors.length === 0) {
+    if (!showFlux || ((!fluxVectors || fluxVectors.length === 0) && (!gateways || gateways.length === 0))) {
       s.fluxLines.visible = false;
       return;
     }
@@ -650,37 +659,79 @@ export default function GlobeCanvas({
     const wing1 = new THREE.Vector3();
     const wing2 = new THREE.Vector3();
 
-    for (const vec of fluxVectors) {
-      const [lon0, lat0] = vec.start;
-      const [lon1, lat1] = vec.end;
-      toXYZ(lat0, lon0, 1.008, a);
-      toXYZ(lat1, lon1, 1.008, b);
+    if (fluxVectors) {
+      for (const vec of fluxVectors) {
+        const [lon0, lat0] = vec.start;
+        const [lon1, lat1] = vec.end;
+        toXYZ(lat0, lon0, 1.008, a);
+        toXYZ(lat1, lon1, 1.008, b);
 
-      // Main shaft line
-      positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
+        // Main shaft line
+        positions.push(a.x, a.y, a.z, b.x, b.y, b.z);
 
-      // Arrowhead wings
-      const dir = new THREE.Vector3().subVectors(b, a).normalize();
-      const norm = new THREE.Vector3().crossVectors(dir, b).normalize();
-      const wingLen = 0.022;
-      wing1.copy(b).sub(dir.clone().multiplyScalar(wingLen)).add(norm.clone().multiplyScalar(wingLen * 0.5));
-      wing2.copy(b).sub(dir.clone().multiplyScalar(wingLen)).sub(norm.clone().multiplyScalar(wingLen * 0.5));
+        // Arrowhead wings
+        const dir = new THREE.Vector3().subVectors(b, a).normalize();
+        const norm = new THREE.Vector3().crossVectors(dir, b).normalize();
+        const wingLen = 0.022;
+        wing1.copy(b).sub(dir.clone().multiplyScalar(wingLen)).add(norm.clone().multiplyScalar(wingLen * 0.5));
+        wing2.copy(b).sub(dir.clone().multiplyScalar(wingLen)).sub(norm.clone().multiplyScalar(wingLen * 0.5));
 
-      positions.push(b.x, b.y, b.z, wing1.x, wing1.y, wing1.z);
-      positions.push(b.x, b.y, b.z, wing2.x, wing2.y, wing2.z);
+        positions.push(b.x, b.y, b.z, wing1.x, wing1.y, wing1.z);
+        positions.push(b.x, b.y, b.z, wing2.x, wing2.y, wing2.z);
 
-      let r = 0.22, g = 0.74, bl = 0.97; // sky
-      if (vec.intensity === 'severe') {
-        r = 0.96; g = 0.25; bl = 0.37; // rose
-      } else if (vec.intensity === 'high') {
-        r = 0.98; g = 0.57; bl = 0.24; // amber
-      } else if (vec.intensity === 'low') {
-        r = 0.2; g = 0.83; bl = 0.6; // emerald
+        // Perpendicular border marker line across midpoint
+        const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+        const perp = new THREE.Vector3().crossVectors(dir, mid).normalize();
+        const bSpan = 0.014;
+        const bp1 = mid.clone().add(perp.clone().multiplyScalar(bSpan));
+        const bp2 = mid.clone().sub(perp.clone().multiplyScalar(bSpan));
+        positions.push(bp1.x, bp1.y, bp1.z, bp2.x, bp2.y, bp2.z);
+
+        let r = 0.22, g = 0.74, bl = 0.97; // sky
+        if (vec.intensity === 'severe') {
+          r = 0.96; g = 0.25; bl = 0.37; // rose
+        } else if (vec.intensity === 'high') {
+          r = 0.98; g = 0.57; bl = 0.24; // amber
+        } else if (vec.intensity === 'low') {
+          r = 0.2; g = 0.83; bl = 0.6; // emerald
+        }
+
+        // 3 segments for arrow = 6 vertices
+        for (let k = 0; k < 6; k++) {
+          colors.push(r, g, bl);
+        }
+        // 1 segment for border marker = 2 vertices
+        colors.push(0.9, 0.9, 0.95);
+        colors.push(0.9, 0.9, 0.95);
       }
+    }
 
-      // 3 line segments = 6 vertices
-      for (let k = 0; k < 6; k++) {
-        colors.push(r, g, bl);
+    // Gateway checkpoint diamond markers
+    if (gateways && gateways.length > 0) {
+      for (const gw of gateways) {
+        const [gwLon, gwLat] = gw.coordinates;
+        const centerGw = toXYZ(gwLat, gwLon, 1.012, new THREE.Vector3());
+        const dSize = 0.007;
+        const phi = ((gwLon + 180) / 360) * Math.PI * 2;
+        const eGw = new THREE.Vector3(Math.sin(phi), 0, Math.cos(phi)).normalize().multiplyScalar(dSize);
+        const nGw = new THREE.Vector3().crossVectors(centerGw, eGw).normalize().multiplyScalar(dSize);
+
+        const pTop = centerGw.clone().add(nGw);
+        const pBot = centerGw.clone().sub(nGw);
+        const pRight = centerGw.clone().add(eGw);
+        const pLeft = centerGw.clone().sub(eGw);
+
+        positions.push(pTop.x, pTop.y, pTop.z, pRight.x, pRight.y, pRight.z);
+        positions.push(pRight.x, pRight.y, pRight.z, pBot.x, pBot.y, pBot.z);
+        positions.push(pBot.x, pBot.y, pBot.z, pLeft.x, pLeft.y, pLeft.z);
+        positions.push(pLeft.x, pLeft.y, pLeft.z, pTop.x, pTop.y, pTop.z);
+
+        let gr = 0.22, gg = 0.74, gbl = 0.97;
+        if (gw.intensity === 'severe') { gr = 0.96; gg = 0.25; gbl = 0.37; }
+        else if (gw.intensity === 'high') { gr = 0.98; gg = 0.57; gbl = 0.24; }
+        else if (gw.intensity === 'low') { gr = 0.2; gg = 0.83; gbl = 0.6; }
+
+        for (let k = 0; k < 8; k++) colors.push(gr, gg, gbl);
       }
     }
 
@@ -688,7 +739,7 @@ export default function GlobeCanvas({
     s.fluxLines.geometry = new THREE.BufferGeometry();
     s.fluxLines.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     s.fluxLines.geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  }, [fluxVectors, showFlux]);
+  }, [fluxVectors, gateways, showFlux]);
 
   // Animation state -> uniforms
   useEffect(() => {

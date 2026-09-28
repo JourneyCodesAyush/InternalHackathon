@@ -67,15 +67,24 @@ def test_calculate_transboundary_flux_with_demo():
 
     # Check vector geometries
     vectors = result["vectors"]
-    assert len(vectors) >= 5
+    assert len(vectors) >= 4
     for vec in vectors:
         assert "start" in vec and len(vec["start"]) == 2
         assert "end" in vec and len(vec["end"]) == 2
         assert "flux_tonnes_day" in vec
         assert "intensity" in vec
 
-    # Check international corridor
-    assert "punjab_international" in result
-    pk_in = result["punjab_international"]
-    assert pk_in["from_jurisdiction"] == "Punjab (Pakistan)"
-    assert pk_in["to_jurisdiction"] == "Punjab (India)"
+    assert len(result["gateways"]) >= 3
+    assert "available_regions" in result
+    assert len(result["available_regions"]) == 4
+
+    # Test other Indian regions
+    pb = calculate_transboundary_flux(demo["no2"], demo["u"], demo["v"], demo["meta"], target_region="punjab")
+    assert pb["region_id"] == "punjab"
+    assert len(pb["gateways"]) >= 3
+
+    igp = calculate_transboundary_flux(demo["no2"], demo["u"], demo["v"], demo["meta"], target_region="igp_east")
+    assert igp["region_id"] == "igp_east"
+
+    sk = calculate_transboundary_flux(demo["no2"], demo["u"], demo["v"], demo["meta"], target_region="singrauli_korba")
+    assert sk["region_id"] == "singrauli_korba"

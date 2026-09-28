@@ -6,7 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import type { Position } from 'geojson';
 import { MAX_COLUMN, MIN_COLUMN, type GlobeFrames, type HoverInfo, type MapView } from './GlobeCanvas';
 import { worldCountries } from './countries';
-import type { FluxVector } from './transboundaryData';
+import type { FluxVector, GatewayItem } from './transboundaryData';
 
 setWorkerUrl('/maplibre/maplibre-gl-worker.mjs');
 
@@ -30,6 +30,7 @@ interface FlatMapProps {
   newestHours: number;
   showWind: boolean;
   fluxVectors?: FluxVector[] | null;
+  gateways?: GatewayItem[] | null;
   showFlux?: boolean;
   onHover: (info: HoverInfo | null) => void;
   onSelect: (point: { lat: number; lon: number } | null) => void;
@@ -136,6 +137,7 @@ export default function FlatMap({
   newestHours,
   showWind,
   fluxVectors,
+  gateways,
   showFlux,
   onHover,
   onSelect,
@@ -147,11 +149,11 @@ export default function FlatMap({
   const mapRef = useRef<MapLibreMap | null>(null);
   const loadedRef = useRef<Promise<void> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const propsRef = useRef({ onHover, onSelect, showWind, fluxVectors, showFlux, data });
+  const propsRef = useRef({ onHover, onSelect, showWind, fluxVectors, gateways, showFlux, data });
 
   useEffect(() => {
-    propsRef.current = { onHover, onSelect, showWind, fluxVectors, showFlux, data };
-  }, [onHover, onSelect, showWind, fluxVectors, showFlux, data]);
+    propsRef.current = { onHover, onSelect, showWind, fluxVectors, gateways, showFlux, data };
+  }, [onHover, onSelect, showWind, fluxVectors, gateways, showFlux, data]);
 
   // Map setup (once)
   useEffect(() => {
@@ -307,57 +309,167 @@ export default function FlatMap({
       wctx.strokeStyle = 'rgba(205,225,255,0.55)';
       wctx.stroke();
 
-      // Render transboundary atmospheric flux vectors across borders
-      const { fluxVectors, showFlux } = propsRef.current;
-      if (showFlux && fluxVectors && fluxVectors.length > 0) {
+      // Render transboundary atmospheric flux vectors, border transects, and gateway checkpoints
+      const { fluxVectors, gateways, showFlux } = propsRef.current;
+      if (showFlux) {
+        const nowTime = performance.now();
+        const currentZoom = map.getZoom();
         wctx.save();
-        for (const vec of fluxVectors) {
-          const a = map.project(vec.start);
-          const b = map.project(vec.end);
-          if (!Number.isFinite(a.x) || !Number.isFinite(b.x)) continue;
 
-          let stroke = '#38bdf8';
-          if (vec.intensity === 'severe') stroke = '#f43f5e';
-          else if (vec.intensity === 'high') stroke = '#fb923c';
-          else if (vec.intensity === 'low') stroke = '#34d399';
+        // 1. Draw Transboundary Corridor Flow Vectors & Border Demarcation
+        if (fluxVectors && fluxVectors.length > 0) {
+          for (const vec of fluxVectors) {
+            const a = map.project(vec.start);
+            const b = map.project(vec.end);
+            if (!Number.isFinite(a.x) || !Number.isFinite(b.x)) continue;
 
-          wctx.shadowColor = stroke;
-          wctx.shadowBlur = 10;
-          wctx.strokeStyle = stroke;
-          wctx.lineWidth = 3.5;
+            let stroke = '#38bdf8';
+            if (vec.intensity === 'severe') stroke = '#f43f5e';
+            else if (vec.intensity === 'high') stroke = '#fb923c';
+            else if (vec.intensity === 'low') stroke = '#34d399';
 
-          // Main vector shaft
-          wctx.beginPath();
-          wctx.moveTo(a.x, a.y);
-          wctx.lineTo(b.x, b.y);
-          wctx.stroke();
+            const midX = (a.x + b.x) / 2;
+            const midY = (a.y + b.y) / 2;
+            const angle = Math.atan2(b.y - a.y, b.x - a.x);
 
-          // Arrowhead
-          const angle = Math.atan2(b.y - a.y, b.x - a.x);
-          const headLen = 10;
-          wctx.fillStyle = stroke;
-          wctx.beginPath();
-          wctx.moveTo(b.x, b.y);
-          wctx.lineTo(b.x - headLen * Math.cos(angle - Math.PI / 6), b.y - headLen * Math.sin(angle - Math.PI / 6));
-          wctx.lineTo(b.x - headLen * Math.cos(angle + Math.PI / 6), b.y - headLen * Math.sin(angle + Math.PI / 6));
-          wctx.closePath();
-          wctx.fill();
+            // A. Draw Border Transect Demarcation (perpendicular dashed line at midpoint)
+            const perpAngle = angle + Math.PI / 2;
+            const vecLen = Math.hypot(b.x - a.x, b.y - a.y);
+            const borderSpan = Math.min(90, Math.max(30, vecLen * 0.75));
 
-          // Badge label with flux rate
-          const midX = (a.x + b.x) / 2;
-          const midY = (a.y + b.y) / 2;
-          const text = `${vec.flux_tonnes_day > 0 ? '+' : ''}${vec.flux_tonnes_day} t/d`;
-          wctx.font = 'bold 10px monospace';
-          const tw = wctx.measureText(text).width;
-          wctx.fillStyle = 'rgba(10, 15, 26, 0.85)';
-          wctx.shadowBlur = 0;
-          wctx.fillRect(midX - tw / 2 - 4, midY - 7, tw + 8, 14);
-          wctx.strokeStyle = stroke;
-          wctx.lineWidth = 1;
-          wctx.strokeRect(midX - tw / 2 - 4, midY - 7, tw + 8, 14);
-          wctx.fillStyle = '#ffffff';
-          wctx.fillText(text, midX - tw / 2, midY + 4);
+            wctx.save();
+            wctx.setLineDash([5, 4]);
+            wctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+            wctx.lineWidth = 1.5;
+            wctx.beginPath();
+            wctx.moveTo(midX - borderSpan * Math.cos(perpAngle), midY - borderSpan * Math.sin(perpAngle));
+            wctx.lineTo(midX + borderSpan * Math.cos(perpAngle), midY + borderSpan * Math.sin(perpAngle));
+            wctx.stroke();
+            wctx.restore();
+
+            // B. Draw Dynamic Advection Plume Pulses along the transport vector
+            const pulsePhase = (nowTime / 1000) % 1;
+            for (let p = 0; p < 3; p++) {
+              const frac = (pulsePhase + p * 0.33) % 1;
+              const px = a.x + (b.x - a.x) * frac;
+              const py = a.y + (b.y - a.y) * frac;
+              wctx.fillStyle = stroke;
+              wctx.shadowColor = stroke;
+              wctx.shadowBlur = 8;
+              wctx.beginPath();
+              wctx.arc(px, py, 2.5, 0, Math.PI * 2);
+              wctx.fill();
+            }
+
+            // C. Main Vector Shaft
+            wctx.shadowColor = stroke;
+            wctx.shadowBlur = 12;
+            wctx.strokeStyle = stroke;
+            wctx.lineWidth = 3.5;
+            wctx.beginPath();
+            wctx.moveTo(a.x, a.y);
+            wctx.lineTo(b.x, b.y);
+            wctx.stroke();
+
+            // D. Arrowhead
+            const headLen = 11;
+            wctx.fillStyle = stroke;
+            wctx.beginPath();
+            wctx.moveTo(b.x, b.y);
+            wctx.lineTo(b.x - headLen * Math.cos(angle - Math.PI / 6), b.y - headLen * Math.sin(angle - Math.PI / 6));
+            wctx.lineTo(b.x - headLen * Math.cos(angle + Math.PI / 6), b.y - headLen * Math.sin(angle + Math.PI / 6));
+            wctx.closePath();
+            wctx.fill();
+
+            // E. Badge Label with Inflow / Outflow & Flux Rate
+            const isInf = vec.is_inflow;
+            const labelType = isInf ? 'INFLOW' : 'OUTFLOW';
+            const text = `${labelType} ${vec.flux_tonnes_day > 0 ? '+' : ''}${vec.flux_tonnes_day} t/d`;
+            wctx.font = 'bold 10px monospace';
+            const tw = wctx.measureText(text).width;
+            const badgeW = tw + 12;
+            const badgeH = currentZoom >= 7.5 ? 24 : 16;
+            const badgeX = midX - badgeW / 2;
+            const badgeY = midY - badgeH / 2;
+
+            wctx.shadowBlur = 0;
+            wctx.fillStyle = 'rgba(10, 15, 26, 0.92)';
+            wctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+            wctx.strokeStyle = stroke;
+            wctx.lineWidth = 1;
+            wctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+
+            wctx.fillStyle = isInf ? '#38bdf8' : '#fb923c';
+            wctx.fillText(text, badgeX + 6, badgeY + 11);
+
+            if (currentZoom >= 7.5) {
+              wctx.font = '9px sans-serif';
+              wctx.fillStyle = 'rgba(212, 212, 216, 0.9)';
+              wctx.fillText(`${vec.from_jurisdiction} → ${vec.to_jurisdiction}`, badgeX + 6, badgeY + 21);
+            }
+          }
         }
+
+        // 2. Draw Airshed Gateway / Border Checkpoint Pins
+        if (gateways && gateways.length > 0) {
+          for (const gw of gateways) {
+            const pt = map.project(gw.coordinates);
+            if (!Number.isFinite(pt.x) || !Number.isFinite(pt.y)) continue;
+
+            let pinColor = '#38bdf8';
+            if (gw.intensity === 'severe') pinColor = '#f43f5e';
+            else if (gw.intensity === 'high') pinColor = '#fb923c';
+            else if (gw.intensity === 'low') pinColor = '#34d399';
+
+            // Animated radar beacon ring
+            const radarPhase = (nowTime / 800) % 1;
+            const ringRadius = 5 + radarPhase * 14;
+            const ringAlpha = Math.max(0, 1 - radarPhase);
+            wctx.strokeStyle = `rgba(56, 189, 248, ${ringAlpha * 0.8})`;
+            wctx.lineWidth = 1.5;
+            wctx.beginPath();
+            wctx.arc(pt.x, pt.y, ringRadius, 0, Math.PI * 2);
+            wctx.stroke();
+
+            // Center Pin Dot
+            wctx.fillStyle = pinColor;
+            wctx.shadowColor = pinColor;
+            wctx.shadowBlur = 8;
+            wctx.beginPath();
+            wctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+            wctx.fill();
+
+            // High zoom checkpoint callout card
+            if (currentZoom >= 6.8) {
+              const title = `📍 ${gw.name}`;
+              const sub = `${gw.corridor}${gw.flux_tonnes_day ? ` · ${gw.flux_tonnes_day} t/d` : ''}`;
+              wctx.font = 'bold 10px sans-serif';
+              const t1w = wctx.measureText(title).width;
+              wctx.font = '9px monospace';
+              const t2w = wctx.measureText(sub).width;
+              const cardW = Math.max(t1w, t2w) + 12;
+              const cardH = 26;
+              const cardX = pt.x + 8;
+              const cardY = pt.y - 13;
+
+              wctx.shadowBlur = 0;
+              wctx.fillStyle = 'rgba(8, 12, 22, 0.92)';
+              wctx.fillRect(cardX, cardY, cardW, cardH);
+              wctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+              wctx.lineWidth = 1;
+              wctx.strokeRect(cardX, cardY, cardW, cardH);
+
+              wctx.font = 'bold 10px sans-serif';
+              wctx.fillStyle = '#f1f5f9';
+              wctx.fillText(title, cardX + 6, cardY + 11);
+
+              wctx.font = '9px monospace';
+              wctx.fillStyle = pinColor;
+              wctx.fillText(sub, cardX + 6, cardY + 22);
+            }
+          }
+        }
+
         wctx.restore();
       }
     };

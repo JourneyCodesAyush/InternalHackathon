@@ -66,8 +66,8 @@ async def test_transboundary_flux_endpoint(auth_client):
     assert data["status"] == "ready"
     assert "delhi_summary" in data
     assert "Delhi's NO₂ today arrived from outside the city" in data["delhi_summary"]["headline"]
-    assert "vectors" in data and len(data["vectors"]) >= 5
-    assert "punjab_international" in data
+    assert "vectors" in data and len(data["vectors"]) >= 4
+    assert "gateways" in data and len(data["gateways"]) >= 3
     assert "legal_evidence_brief" in data
 
 
