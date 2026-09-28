@@ -290,6 +290,10 @@ export default function FlatMap({
         lon[p] += (field.u[k] * scale) / Math.max(0.15, Math.cos((lat[p] * Math.PI) / 180));
         lat[p] += field.v[k] * scale;
         life[p] -= 1;
+        if (!(Math.abs(lat[p]) < 84) || !Number.isFinite(lon[p])) {
+          life[p] = 0;
+          continue;
+        }
         const b = map.project([lon[p], lat[p]]);
         if (Math.abs(b.x - a.x) > 40) continue;
         wctx.moveTo(a.x, a.y);

@@ -49,7 +49,7 @@ export async function fetchGlobalSnapshot(hours = 24, signal?: AbortSignal): Pro
   try {
     res = await fetch(`${API_BASE}/api/v1/globe/no2?hours=${hours}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
-      signal,
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000),
     });
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e;
