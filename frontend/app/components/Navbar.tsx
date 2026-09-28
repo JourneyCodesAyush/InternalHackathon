@@ -13,6 +13,7 @@ import {
   Menu,
   X,
   Activity,
+  Bot,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 
@@ -116,6 +117,18 @@ export default function Navbar() {
           >
             <Activity className="w-3.5 h-3.5" />
             Plume Flow (Physics)
+          </Link>
+
+          <Link
+            href="/chatbot"
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+              pathname === '/chatbot'
+                ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1b202e]'
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5" />
+            Agent Portal
           </Link>
         </nav>
       </div>
@@ -302,6 +315,19 @@ export default function Navbar() {
             >
               <Activity className="w-4 h-4 text-blue-400" />
               Plume Flow (Physics)
+            </Link>
+
+            <Link
+              href="/chatbot"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium ${
+                pathname === '/chatbot'
+                  ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40'
+                  : 'text-zinc-300 hover:bg-[#1b202e]'
+              }`}
+            >
+              <Bot className="w-4 h-4 text-blue-400" />
+              Agent Portal
             </Link>
           </nav>
 
