@@ -54,8 +54,8 @@ CompsInternal/
 ### 1. Clone & configure environment
 
 ```bash
-git clone <repo-url>
-cd CompsInternal
+git clone https://github.com/JourneyCodesAyush/InternalHackathon
+cd InternalHackathon
 ```
 
 **Backend:**
