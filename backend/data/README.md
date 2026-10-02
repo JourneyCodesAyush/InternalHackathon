@@ -6,10 +6,10 @@ what to download and how to add it.
 
 ## 1. What to download (in priority order)
 
-| Priority | What | Why |
-|---|---|---|
-| **1** | **Mumbai, hourly NO₂, 1 Jan 2023 – 31 Dec 2025**, for the 19 stations listed below | Hourly data lets the model use only 12:00–16:00, when the satellite passes; 3 years gives ~18× more training days than now |
-| 2 | Delhi (≈40 stations), then Pune, Hyderabad or Bengaluru: same settings | Many more locations with different land use; network quirks average out (joint multi-city training is the next code step; download is already useful) |
+| Priority | What                                                                               | Why                                                                                                                                                   |
+| -------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1**    | **Mumbai, hourly NO₂, 1 Jan 2023 – 31 Dec 2025**, for the 19 stations listed below | Hourly data lets the model use only 12:00–16:00, when the satellite passes; 3 years gives ~18× more training days than now                            |
+| 2        | Delhi (≈40 stations), then Pune, Hyderabad or Bengaluru: same settings             | Many more locations with different land use; network quirks average out (joint multi-city training is the next code step; download is already useful) |
 
 **End date must be on or before 31 Dec 2025** — the boundary-layer-height source (GEOS-CF) ends on 2 Jan 2026.
 
@@ -75,7 +75,7 @@ station has no coordinates: add a row `"<exact station name>",<lat>,<lon>` to `d
 (it already holds ~550 CPCB stations across India) and run it again.
 
 ```bash
-uv run python -m ml_engine --source gee --ee-project internal-hackathon-509815 --start 2023-01-01 --end 2025-12-31 --stations data/cpcb_mumbai_hourly.csv
+uv run python -m ml_engine --source gee --ee-project your-gcp-project-id --start 2023-01-01 --end 2025-12-31 --stations data/cpcb_mumbai_hourly.csv
 ```
 
 - Hourly readings are averaged over **12:00–16:00 local time** by default (`--station-hours 12-16`);
@@ -96,9 +96,9 @@ git push
 
 ## Common mistakes
 
-| Symptom | Cause |
-|---|---|
-| Station name ends in `Delhi - DPCC` | State/City left on the Delhi default |
+| Symptom                                  | Cause                                                   |
+| ---------------------------------------- | ------------------------------------------------------- |
+| Station name ends in `Delhi - DPCC`      | State/City left on the Delhi default                    |
 | Values ~60–300, very smooth hour to hour | Downloaded from the AQI repository (AQI index, not NO₂) |
-| `expected exactly one 'NO2' column` | Several parameters or several stations in one report |
-| Only one row per day | Criteria was 24 Hours instead of 1 Hours |
+| `expected exactly one 'NO2' column`      | Several parameters or several stations in one report    |
+| Only one row per day                     | Criteria was 24 Hours instead of 1 Hours                |

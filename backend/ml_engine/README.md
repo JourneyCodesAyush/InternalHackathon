@@ -3,13 +3,13 @@
 Turns coarse Sentinel-5P satellite NO₂ (~3.9 km, with cloud gaps) into **gap-free 250 m ground-level
 NO₂ maps (µg/m³)** for any Indian city, plus short-range plume forecasts and hazard-band layers.
 
-| Stage | What it does |
-|---|---|
-| 1. Gap-filling | Random Forest fills cloud-masked satellite pixels (median-mosaic fallback for long cloudy spells) |
-| 2. Downscaling | XGBoost sharpens ~3.9 km → ~270 m using land use and weather; corrected so it still averages to the satellite measurement |
-| 3. Ground-level model | Nationally trained model converts the satellite column + weather + land use to µg/m³ at ground level |
-| 4. Dispersion | Advection–diffusion solver drifts the map with the wind (+1/+3/+6 h, or any horizons) |
-| 5. Export | GeoTIFF (COG), NetCDF, GeoJSON (hazard bands, wind arrows, points), CSV |
+| Stage                 | What it does                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 1. Gap-filling        | Random Forest fills cloud-masked satellite pixels (median-mosaic fallback for long cloudy spells)                         |
+| 2. Downscaling        | XGBoost sharpens ~3.9 km → ~270 m using land use and weather; corrected so it still averages to the satellite measurement |
+| 3. Ground-level model | Nationally trained model converts the satellite column + weather + land use to µg/m³ at ground level                      |
+| 4. Dispersion         | Advection–diffusion solver drifts the map with the wind (+1/+3/+6 h, or any horizons)                                     |
+| 5. Export             | GeoTIFF (COG), NetCDF, GeoJSON (hazard bands, wind arrows, points), CSV                                                   |
 
 ## Setup
 
@@ -47,11 +47,11 @@ CPCB station locations; `--bbox WEST SOUTH EAST NORTH` works anywhere in India).
 
 ## Inputs
 
-| You provide | Notes |
-|---|---|
-| Area: `--city` or `--bbox` | India (road data covers South Asia) |
-| Dates: `--start`, `--end` | Sentinel-5P exists from mid-2018. Best before 2 Jan 2026 (boundary-layer height source ends then; later dates use an estimate) |
-| `--stations` (optional) | Ground-station CSV `station_id,lat,lon,date,no2` for an independent accuracy check. See `data/README.md` |
+| You provide                | Notes                                                                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Area: `--city` or `--bbox` | India (road data covers South Asia)                                                                                            |
+| Dates: `--start`, `--end`  | Sentinel-5P exists from mid-2018. Best before 2 Jan 2026 (boundary-layer height source ends then; later dates use an estimate) |
+| `--stations` (optional)    | Ground-station CSV `station_id,lat,lon,date,no2` for an independent accuracy check. See `data/README.md`                       |
 
 Pulled automatically from Google Earth Engine: Sentinel-5P NO₂ and CO, ERA5-Land weather (at the
 satellite overpass hour), GEOS-CF boundary-layer height, NASADEM elevation, Sentinel-2 vegetation and
@@ -60,15 +60,15 @@ Downloads are cached in `cache/`.
 
 ## Outputs (`outputs/<run>/`)
 
-| File | Content |
-|---|---|
-| `daily/<date>/no2_surface_fine.tif` | **Main product**: 250 m ground-level NO₂ (µg/m³), one per day |
-| `daily/<date>/no2_raw_coarse.tif`, `no2_gapfilled_coarse.tif` | Satellite column before/after cloud filling |
-| `daily/<date>/no2_hazard_bands.geojson` | Normal / Moderate / Unhealthy / Hazardous zones (SRS thresholds) |
-| `no2_surface_fine.nc` | All days in one NetCDF (time slider, downloads) |
-| `no2_forecast_<last date>.tif` | Plume forecast, one band per horizon |
-| `wind_vectors_<last date>.geojson` | Wind arrows for the flow overlay |
-| `report.json` | Every metric and processing decision |
+| File                                                          | Content                                                          |
+| ------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `daily/<date>/no2_surface_fine.tif`                           | **Main product**: 250 m ground-level NO₂ (µg/m³), one per day    |
+| `daily/<date>/no2_raw_coarse.tif`, `no2_gapfilled_coarse.tif` | Satellite column before/after cloud filling                      |
+| `daily/<date>/no2_hazard_bands.geojson`                       | Normal / Moderate / Unhealthy / Hazardous zones (SRS thresholds) |
+| `no2_surface_fine.nc`                                         | All days in one NetCDF (time slider, downloads)                  |
+| `no2_forecast_<last date>.tif`                                | Plume forecast, one band per horizon                             |
+| `wind_vectors_<last date>.geojson`                            | Wind arrows for the flow overlay                                 |
+| `report.json`                                                 | Every metric and processing decision                             |
 
 All rasters are EPSG:4326 Cloud-Optimised GeoTIFFs, float32, NaN = no data.
 
@@ -89,10 +89,10 @@ From async endpoints call them with `await asyncio.to_thread(generate_map, ...)`
 
 They back two API endpoints (`app/services/downscale_service.py`, `app/services/trends_service.py`):
 
-| Endpoint | Returns |
-|---|---|
+| Endpoint                                                                              | Returns                                                                                                             |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/v1/downscale/map?bbox=min_lon,min_lat,max_lon,max_lat&timestamp=2025-12-31` | `grid_url` (250 m GeoTIFF), `raw_url`, `gapfilled_url`, `hazard_geojson_url`, `netcdf_url`, `resolution`, `metrics` |
-| `GET /api/v1/trends/predict?lat=19.07&lon=72.87&hours=24` | NO₂, wind speed, wind direction (from) and confidence every 3 h |
+| `GET /api/v1/trends/predict?lat=19.07&lon=72.87&hours=24`                             | NO₂, wind speed, wind direction (from) and confidence every 3 h                                                     |
 
 Files are served from the `/files/...` static mount in `app/main.py`. Set `EE_PROJECT` in `backend/.env`.
 
@@ -109,13 +109,13 @@ uv run python -m ml_engine.national --stations data/openaq_india_no2_hourly.csv 
 
 ## Accuracy (all measured on data the model never saw)
 
-| Check | R² | Typical error |
-|---|---|---|
-| Cloud gap-filling (hidden clear pixels) | 0.93 | — |
-| Downscaling (held-out days, satellite scale) | 0.92 | — |
-| Ground-level NO₂ — unseen cities (leave-one-city-out) | 0.23 | ±23 µg/m³ |
-| Ground-level NO₂ — unseen stations and dates | 0.18 | ±24 µg/m³ |
-| Mumbai, Nov–Dec 2025 (period unseen) | −0.13 | bias −0.3 µg/m³, day-to-day r = 0.63 |
+| Check                                                 | R²    | Typical error                        |
+| ----------------------------------------------------- | ----- | ------------------------------------ |
+| Cloud gap-filling (hidden clear pixels)               | 0.93  | —                                    |
+| Downscaling (held-out days, satellite scale)          | 0.92  | —                                    |
+| Ground-level NO₂ — unseen cities (leave-one-city-out) | 0.23  | ±23 µg/m³                            |
+| Ground-level NO₂ — unseen stations and dates          | 0.18  | ±24 µg/m³                            |
+| Mumbai, Nov–Dec 2025 (period unseen)                  | −0.13 | bias −0.3 µg/m³, day-to-day r = 0.63 |
 
 R² = 1 is perfect, 0 is no better than always predicting the average. The satellite stages are reliable;
 the ground-level values capture **trends and hotspots** but single station-days can be off by ~±23 µg/m³
@@ -127,16 +127,16 @@ Validation is leakage-free: models are always scored on stations *and* dates exc
 `ml_engine.report` turns a run into a formal report for officials and researchers. Every number is
 computed in code (`report/analysis.py`); the language model only phrases them.
 
-| Section | Content |
-|---|---|
-| Status | Normal / Elevated / Critical / Critical Spike from the SRS bands and the CPCB 24 h standard (80 µg/m³) |
-| Comparison with standards | Area average, 95th percentile, highest cell and share of area vs CPCB NAAQS (80 / 40) and WHO (25) |
-| Map and hotspots | 250 m map with the top 3 hotspots, named after the nearest CPCB station, with likely contributors (roads, power plants, dense activity) |
-| Population exposure | People living in each hazard band (GHSL), population-weighted average |
-| Forecast alerts | +3/+6/+12/+24 h from the dispersion solver: exceedance expected / persisting / improving |
-| Weather-adjusted trend | 30-day series with the weather effect removed (ridge regression on boundary layer, wind, temperature, rain) |
-| Risk context, recommendations | Gemini narrative when available, otherwise built-in templates |
-| Method and limitations | Data sources, accuracy (R² 0.23 on unseen cities, ±23 µg/m³) |
+| Section                       | Content                                                                                                                                 |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Status                        | Normal / Elevated / Critical / Critical Spike from the SRS bands and the CPCB 24 h standard (80 µg/m³)                                  |
+| Comparison with standards     | Area average, 95th percentile, highest cell and share of area vs CPCB NAAQS (80 / 40) and WHO (25)                                      |
+| Map and hotspots              | 250 m map with the top 3 hotspots, named after the nearest CPCB station, with likely contributors (roads, power plants, dense activity) |
+| Population exposure           | People living in each hazard band (GHSL), population-weighted average                                                                   |
+| Forecast alerts               | +3/+6/+12/+24 h from the dispersion solver: exceedance expected / persisting / improving                                                |
+| Weather-adjusted trend        | 30-day series with the weather effect removed (ridge regression on boundary layer, wind, temperature, rain)                             |
+| Risk context, recommendations | Gemini narrative when available, otherwise built-in templates                                                                           |
+| Method and limitations        | Data sources, accuracy (R² 0.23 on unseen cities, ±23 µg/m³)                                                                            |
 
 ```python
 from ml_engine.report import generate_report

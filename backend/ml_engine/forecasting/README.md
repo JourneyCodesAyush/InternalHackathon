@@ -113,10 +113,10 @@ The network operates on:
 
 The system features an interchangeable dual dataset architecture switchable via configuration:
 
-| Mode | Configuration | Description |
-| :--- | :--- | :--- |
+| Mode               | Configuration                  | Description                                                                                                                                                                |
+| :----------------- | :----------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Synthetic Mode** | `FORECAST_DATA_MODE=synthetic` | Offline training, testing, and CI/CD generating realistic synthetic atmospheric scenarios (shifting winds, vortex rotation, plume merging/splitting, mountain deflection). |
-| **Real Data Mode** | `FORECAST_DATA_MODE=real` | Production mode consuming live or cached Sentinel-5P, ERA5, and ground-truth feeds. |
+| **Real Data Mode** | `FORECAST_DATA_MODE=real`      | Production mode consuming live or cached Sentinel-5P, ERA5, and ground-truth feeds.                                                                                        |
 
 ---
 
@@ -124,16 +124,16 @@ The system features an interchangeable dual dataset architecture switchable via 
 
 All settings can be configured via environment variables or `ForecastConfig`:
 
-| Environment Variable | Default | Description |
-| :--- | :--- | :--- |
-| `FORECAST_DATA_MODE` | `synthetic` | `synthetic` or `real` dataset mode |
-| `FORECAST_INTERVAL` | `30` | Output cadence in minutes ($+30, +60, +90, +120$) |
-| `INTERNAL_TIMESTEP` | `300` | Solver internal simulation timestep ($\Delta t$ in seconds) |
-| `ENABLE_DYNAMIC_WIND` | `true` | Enable continuous hourly wind interpolation |
-| `ENABLE_TERRAIN_EFFECT` | `true` | Enable DEM and slope flow deflection |
-| `ENABLE_SOURCE_PERSISTENCE` | `true` | Model continuous industrial and traffic emissions |
-| `PHOTOCHEMICAL_LIFETIME_HOURS` | `4.0` | NO₂ chemical lifetime $\tau$ (hours) |
-| `DIFFUSION_COEFFICIENT` | `50.0` | Eddy diffusivity $K_h$ ($\text{m}^2/\text{s}$) |
+| Environment Variable           | Default     | Description                                                 |
+| :----------------------------- | :---------- | :---------------------------------------------------------- |
+| `FORECAST_DATA_MODE`           | `synthetic` | `synthetic` or `real` dataset mode                          |
+| `FORECAST_INTERVAL`            | `30`        | Output cadence in minutes ($+30, +60, +90, +120$)           |
+| `INTERNAL_TIMESTEP`            | `300`       | Solver internal simulation timestep ($\Delta t$ in seconds) |
+| `ENABLE_DYNAMIC_WIND`          | `true`      | Enable continuous hourly wind interpolation                 |
+| `ENABLE_TERRAIN_EFFECT`        | `true`      | Enable DEM and slope flow deflection                        |
+| `ENABLE_SOURCE_PERSISTENCE`    | `true`      | Model continuous industrial and traffic emissions           |
+| `PHOTOCHEMICAL_LIFETIME_HOURS` | `4.0`       | NO₂ chemical lifetime $\tau$ (hours)                        |
+| `DIFFUSION_COEFFICIENT`        | `50.0`      | Eddy diffusivity $K_h$ ($\text{m}^2/\text{s}$)              |
 
 ---
 

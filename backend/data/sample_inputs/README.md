@@ -17,22 +17,22 @@ Results land in `outputs/files_<timestamp>/`: a 250 m ground-level NO₂ map per
 
 ## What the files contain
 
-| Property | Value |
-|---|---|
-| Files | `no2_raw_coarse_<YYYY-MM-DD>.tif`, one per day |
-| Quantity | Sentinel-5P tropospheric NO₂ column, daily composite at the ~13:30 local overpass |
-| Units | µmol/m² (tag `units = umol m-2`) |
-| Grid | EPSG:4326, 0.035° pixels (~3.9 km), 10 × 13 pixels, bounds 72.77–73.12 °E, 18.865–19.32 °N |
-| Clouds | No-data (NaN) where the satellite could not see |
-| Source | `COPERNICUS/S5P/OFFL/L3_NO2` via Google Earth Engine, cloud fraction < 0.3 |
+| Property | Value                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------ |
+| Files    | `no2_raw_coarse_<YYYY-MM-DD>.tif`, one per day                                             |
+| Quantity | Sentinel-5P tropospheric NO₂ column, daily composite at the ~13:30 local overpass          |
+| Units    | µmol/m² (tag `units = umol m-2`)                                                           |
+| Grid     | EPSG:4326, 0.035° pixels (~3.9 km), 10 × 13 pixels, bounds 72.77–73.12 °E, 18.865–19.32 °N |
+| Clouds   | No-data (NaN) where the satellite could not see                                            |
+| Source   | `COPERNICUS/S5P/OFFL/L3_NO2` via Google Earth Engine, cloud fraction < 0.3                 |
 
-| Date | Cloud cover |
-|---|---|
-| 28 Nov 2025 | 79% |
-| 30 Nov 2025 | 35% |
-| 2 Dec 2025 | 35% |
-| 25–26 Nov, 6 Dec | 2–5% |
-| All other days | clear |
+| Date             | Cloud cover |
+| ---------------- | ----------- |
+| 28 Nov 2025      | 79%         |
+| 30 Nov 2025      | 35%         |
+| 2 Dec 2025       | 35%         |
+| 25–26 Nov, 6 Dec | 2–5%        |
+| All other days   | clear       |
 
 The cloudy days show the gap-filling at work: those pixels come back filled in the outputs.
 
