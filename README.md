@@ -172,9 +172,3 @@ See [`frontend/.env.example`](frontend/.env.example) for the full template.
 - Use `.env.example` files as templates (they contain only placeholder values)
 - `LOCAL_DEMO_MODE=true` is for local development only — never use on a public server
 - Restrict CORS `allow_origins` from `*` to specific domains before deploying to production
-
----
-
-## License
-
-Internal hackathon project — not for public distribution.
