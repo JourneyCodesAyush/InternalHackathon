@@ -481,7 +481,7 @@ export default function KeysManagerPage() {
                   type="text"
                   value={newKeyInput}
                   onChange={(e) => setNewKeyInput(e.target.value)}
-                  placeholder="AIzaSyAFFfACUJGSh5bSCBtHhQnIm5ccxV0n1UE"
+                  placeholder="AIzaSy..."
                   className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none font-mono text-sm text-slate-200 placeholder-slate-600 transition-all"
                 />
               </div>

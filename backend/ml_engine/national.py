@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as cf
 import logging
+import os
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -341,7 +342,7 @@ def main(argv=None) -> int:
     p.add_argument("--stations", required=True, help="station CSV (e.g. from ml_engine.ingestion.openaq)")
     p.add_argument("--start", default="2019-01-01")
     p.add_argument("--end", default="2022-12-31")
-    p.add_argument("--ee-project", default="internal-hackathon-509815")
+    p.add_argument("--ee-project", default=os.environ.get("EE_PROJECT", ""), help="Earth Engine project ID (or set EE_PROJECT env var)")
     p.add_argument("--cache-dir", default="cache/national")
     p.add_argument("--model-out", default="models/national/surface_model.joblib")
     p.add_argument("--report-out", default="models/national/report.json")

@@ -14,7 +14,7 @@ Usage
     from ml_engine.forecasting.downloader import GlobalDataDownloader
     from ml_engine.forecasting.config import ForecastConfig
 
-    dl = GlobalDataDownloader(ForecastConfig(), ee_project="internal-hackathon-509815")
+    dl = GlobalDataDownloader(ForecastConfig(), ee_project=os.environ.get("EE_PROJECT", "your-gcp-project-id"))
     dl.download_city("Mumbai", start="2019-01-01", end="2024-12-31")
     dl.download_static("Mumbai")
 """
@@ -543,7 +543,7 @@ if __name__ == "__main__":
     parser.add_argument("--city", type=str, default="Mumbai", help="Target city name (e.g., Mumbai, Delhi, London, Beijing)")
     parser.add_argument("--start", type=str, default="2024-01-01", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, default="2024-01-15", help="End date (YYYY-MM-DD)")
-    parser.add_argument("--project", type=str, default="internal-hackathon-509815", help="Earth Engine Project ID")
+    parser.add_argument("--project", type=str, default=os.environ.get("EE_PROJECT", ""), help="Earth Engine Project ID (or set EE_PROJECT env var)")
     parser.add_argument("--print-links", action="store_true", help="Print all manual data acquisition download links")
     parser.add_argument("--all-cities", action="store_true", help="Download all configured global cities")
 
